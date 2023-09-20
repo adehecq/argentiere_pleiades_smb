@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 29 14:34:39 2023
+Script used to simulate 100 realistic bed topographies, compatible with the observations, using Seuqnetial Gaussian Simulations (SGS).
 
-@author: bassetau
+Authors: AUguste Basset, Amaury Dehecq
 """
 import geoutils as gu
 import matplotlib.pyplot as plt
