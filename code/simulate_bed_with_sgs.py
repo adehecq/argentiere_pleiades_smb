@@ -5,27 +5,28 @@ Script used to simulate 100 realistic bed topographies, compatible with the obse
 
 Authors: AUguste Basset, Amaury Dehecq
 """
-import geoutils as gu
-import matplotlib.pyplot as plt
 import geopandas as gpd
-import pandas
-import numpy as np
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-import matplotlib
+import geoutils as gu
 import gstools as gs
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas
 import pyvista as pv
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import griddata
 
 
 def insert_zeros(array):
-    
-    original_shape=array.shape
-    new_shape=(original_shape[0], original_shape[1]+1, original_shape[2])
-    new_array=np.zeros(new_shape)
-    new_array[:,:-1,:] = array
-    
+
+    original_shape = array.shape
+    new_shape = (original_shape[0], original_shape[1] + 1, original_shape[2])
+    new_array = np.zeros(new_shape)
+    new_array[:, :-1, :] = array
+
     return new_array
-    
+
+
 def run_srf(H_model, vg_model, downsampling, ens_no):
 
     global H_simu
@@ -36,9 +37,9 @@ def run_srf(H_model, vg_model, downsampling, ens_no):
     # Grid origin
     grid.origin = (H_model.bounds.left, H_model.bounds.top, 0)
     # Cell sizes
-    grid.spacing = (ncols//downsampling, nrows//downsampling, 1)
+    grid.spacing = (ncols // downsampling, nrows // downsampling, 1)
     # Number of cells in each direction
-    grid.dimensions = (H_model.width//downsampling, H_model.height//downsampling, 1)
+    grid.dimensions = (H_model.width // downsampling, H_model.height // downsampling, 1)
 
     # conditions
     cond_pos = list([list(zbed_x), list(zbed_y)])
@@ -54,10 +55,10 @@ def run_srf(H_model, vg_model, downsampling, ens_no):
     mask = arg_outline.create_mask(H_model)
     x_model, y_model = H_model.coords()
     x_model = x_model[0]
-    y_model = y_model[:,0]
-        
+    y_model = y_model[:, 0]
+
     cond_srf.set_pos([x_model[::downsampling], y_model[::downsampling]], "structured")
-    
+
     # seeded ensemble generation
     seed = gs.random.MasterRNG(20170519)
     for i in range(ens_no):
@@ -73,6 +74,7 @@ def run_srf(H_model, vg_model, downsampling, ens_no):
     # plt.show()
 
     return cond_srf
+
 
 # --------------------------------------------------------------- Main ---------------------------------------------------------
 # --- Load input data --- #
@@ -91,7 +93,7 @@ mnt_fict = gu.Raster(r"C:\Users\Aug\Desktop\Stage_IGE\Data\dH\MNT\MNT_fict.tif")
 zsurf = mnt_fict.value_at_coords(zbed_x, zbed_y)
 
 # Calculate thickness and remove bad values
-zsurf[zsurf==0] = np.nan
+zsurf[zsurf == 0] = np.nan
 zsurf = pandas.Series(zsurf.flatten())
 H_obs = zsurf - zbed
 H_obs[H_obs < 0] = np.nan
@@ -124,12 +126,12 @@ fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(12, 12))
 
 # Modeled H
 H_model.show(ax=axes[0, 0], cbar_title="Modeled thickness (m)", vmin=0, vmax=400)
-arg_outline.show(fc='none', ec='k', ax=axes[0, 0])
+arg_outline.show(fc="none", ec="k", ax=axes[0, 0])
 
 # Residuals map
 cmap = "coolwarm"
 vmax = 150
-arg_outline.show(fc='none', ec='k', ax=axes[0, 1])
+arg_outline.show(fc="none", ec="k", ax=axes[0, 1])
 sc = axes[0, 1].scatter(zbed_x, zbed_y, c=res, vmin=-vmax, vmax=vmax, cmap=cmap)
 # make sure cmap is same height as subplot
 divider = make_axes_locatable(axes[0, 1])
@@ -138,13 +140,13 @@ norm = matplotlib.colors.Normalize(vmin=-vmax, vmax=150)
 cb = matplotlib.colorbar.ColorbarBase(cax, cmap=cmap, norm=norm)
 # cb = plt.colorbar(sc)
 cb.set_label("Residual obs - model (m)")
-            
+
 # Residuals scatterplot
 plt.sca(axes[1, 0])
-plt.plot(H_obs, H_model_obs, ls='', marker='+', c="C0")
+plt.plot(H_obs, H_model_obs, ls="", marker="+", c="C0")
 plt.xlabel("Observed thickness (m)")
 plt.ylabel("Modeled thickness (m)")
-plt.axline((0, 0), slope=1, color='k', ls='--')  # Plot 1:1 line
+plt.axline((0, 0), slope=1, color="k", ls="--")  # Plot 1:1 line
 plt.title(f"R2 = {r**2:.2f}")
 
 # Residuals histogram
@@ -158,20 +160,20 @@ plt.show()
 ## -------------- Gaussian simulation-----------------##
 
 # Compute a variogram and fit that variogram to an exponential model
-bin_center, gamma = gs.vario_estimate((zbed_x,zbed_y), res)
+bin_center, gamma = gs.vario_estimate((zbed_x, zbed_y), res)
 
-#------------------Test to find the best covariance model-----------
+# ------------------Test to find the best covariance model-----------
 # Define a set of models to test
 models = {
-"Gaussian": gs.Gaussian,
-"Exponential": gs.Exponential,
-"Matern": gs.Matern,
-"Stable": gs.Stable,
-"Rational": gs.Rational,
-"Circular": gs.Circular,
-"Spherical": gs.Spherical,
-"SuperSpherical": gs.SuperSpherical,
-"JBessel": gs.JBessel,
+    "Gaussian": gs.Gaussian,
+    "Exponential": gs.Exponential,
+    "Matern": gs.Matern,
+    "Stable": gs.Stable,
+    "Rational": gs.Rational,
+    "Circular": gs.Circular,
+    "Spherical": gs.Spherical,
+    "SuperSpherical": gs.SuperSpherical,
+    "JBessel": gs.JBessel,
 }
 scores = {}
 
@@ -183,7 +185,7 @@ ax = plt.gca()
 for model in models:
     fit_model = models[model](dim=2)
     para, pcov, r2 = fit_model.fit_variogram(bin_center, gamma, return_r2=True)
-    fit_model.plot(x_max = 3000, ax=ax)
+    fit_model.plot(x_max=3000, ax=ax)
     scores[model] = r2
 
 # Create a ranking based on the score and determine the best models
@@ -193,13 +195,13 @@ print("RANKING by Pseudo-r2 score")
 for i, (model, score) in enumerate(ranking, 1):
     print(f"{i:>6}. {model:>15}: {score:.5}")
 plt.show()
-#--------------------------------------------------------------------
+# --------------------------------------------------------------------
 
-#fit_model = gs.Exponential(dim = 2, var = 2658.4120995073145, len_scale = 440.7028787096736, nugget = 356.8240249489487)
-fit_model = gs.Exponential(dim = 2)
+# fit_model = gs.Exponential(dim = 2, var = 2658.4120995073145, len_scale = 440.7028787096736, nugget = 356.8240249489487)
+fit_model = gs.Exponential(dim=2)
 fit_model.fit_variogram(bin_center, gamma, nugget=True)
 
-ax = fit_model.plot(x_max = max(bin_center))
+ax = fit_model.plot(x_max=max(bin_center))
 ax.scatter(bin_center, gamma)
 gs.covmodel.plot.plot_variogram(fit_model, ax=ax)
 plt.xlabel("Lag Distance")
@@ -211,14 +213,14 @@ plt.show()
 
 # fields = zonal_srf_bed(zbed_ds, H_model, file_zone, fit_model).all_fields
 # x_model_zone, y_model_zone = zonal_coord(H_model)
-#H_cond.value_at_coords(x_model_zone, y_model_zone) = fields
+# H_cond.value_at_coords(x_model_zone, y_model_zone) = fields
 
-# create glacier contour 
+# create glacier contour
 mask1 = arg_outline.create_mask(H_model)
 mask2 = arg_outline.create_mask(H_model, buffer=10)
-final_mask = (mask2 & ~mask1)
+final_mask = mask2 & ~mask1
 idx_contour = np.where(final_mask.data)
-res_contour = np.ones(np.size(idx_contour,1))*0.001
+res_contour = np.ones(np.size(idx_contour, 1)) * 0.001
 res = np.concatenate((res, res_contour))
 # res now contains residuals on measurements sites and on glacier contour
 # modify zbed_x and zbed_y accordingly
@@ -233,7 +235,7 @@ idx_contour = np.delete(idx_contour, -1, axis=1)
 final_mask_array = np.delete(final_mask.data, -1, axis=0)
 
 # run simulations
-downsampling=2
+downsampling = 2
 ens_no = 100
 cond_srf = run_srf(H_model, fit_model, downsampling=downsampling, ens_no=ens_no)
 
@@ -241,14 +243,14 @@ cond_srf = run_srf(H_model, fit_model, downsampling=downsampling, ens_no=ens_no)
 # first, find (x,y) coordinates of on-glacier pixels based on every pixels
 x_model, y_model = H_model.coords()
 x_model = x_model[0]
-y_model = y_model[:,0]
-y_model = np.delete(y_model, H_model.shape[0]-1,0)
+y_model = y_model[:, 0]
+y_model = np.delete(y_model, H_model.shape[0] - 1, 0)
 on_glacier_coords = []
 for i in x_model:
     for j in y_model:
-        if H_model.value_at_coords(i,j) != H_model.nodata:
-            on_glacier_coords.append((i,j))
-            
+        if H_model.value_at_coords(i, j) != H_model.nodata:
+            on_glacier_coords.append((i, j))
+
 # Retrieve (x,y) on-glacier coordinates
 x_on_glacier = []
 y_on_glacier = []
@@ -268,7 +270,7 @@ x_run_on_glacier = []
 y_run_on_glacier = []
 for x in x_run:
     for y in y_run:
-        if (x,y) in on_glacier_coords:
+        if (x, y) in on_glacier_coords:
             x_run_on_glacier.append(x)
             y_run_on_glacier.append(y)
 
@@ -281,7 +283,7 @@ i_run = []
 j_run = []
 for i in x_run:
     for j in y_run:
-        k,l = H_model.xy2ij(i,j)
+        k, l = H_model.xy2ij(i, j)
         i_run.append(k)
         j_run.append(l)
 
@@ -291,7 +293,7 @@ for i in x_run:
 # initialize simulated beds arrays
 H_simu = np.zeros((ens_no, np.size(y_model), np.size(x_model)))
 H_model_temp = H_model.data
-H_model_temp = np.delete(H_model_temp, -1, axis = 0)
+H_model_temp = np.delete(H_model_temp, -1, axis=0)
 
 for k in range(ens_no):
     compt_i = 0
@@ -300,7 +302,7 @@ for k in range(ens_no):
     for i in i_run_on_glacier:
         for j in j_run_on_glacier:
             H_simu[k][i][j] = cond_srf.all_fields[k][compt_j][compt_i] + np.log(H_model_temp[i][j])
-            compt_j+=1
+            compt_j += 1
         compt_j = 0
         compt_i += 1
 
@@ -313,7 +315,7 @@ idx_run = np.asarray(idx_run)
 grid_i, grid_j = np.meshgrid(np.unique(i_on_glacier), np.unique(j_on_glacier))
 for i in range(ens_no):
     z = H_simu[i][~np.isnan(H_simu[i])]
-    func = griddata(np.transpose(idx_run), z, (grid_i, grid_j), method='linear')
+    func = griddata(np.transpose(idx_run), z, (grid_i, grid_j), method="linear")
     H_simu[i] = np.exp(np.transpose(func))
 H_simu = insert_zeros(H_simu)
 
@@ -322,9 +324,9 @@ for k in range(ens_no):
     raster = gu.Raster.from_array(H_simu[k], H_model.transform, H_model.crs, nodata=H_model.nodata)
     raster.set_mask(~mask1)
     var = k
-    raster.save(f'simulated_bed_{var}.tif')
+    raster.save(f"simulated_bed_{var}.tif")
     H_simu[k] = raster.to_xarray()
-    H_simu[k][H_simu[k]<0]=np.nan
+    H_simu[k][H_simu[k] < 0] = np.nan
 
 # # Now we can go back to physical values the values and add reference bed
 # for k in range(ens_no):
@@ -335,7 +337,7 @@ for k in range(ens_no):
 fig, ax = plt.subplots(2, 2, sharex=True, sharey=True)
 ax = ax.flatten()
 for i in range(4):
-    im = ax[i].imshow(H_simu[i+12], vmin = 0, vmax = 500)
-    if i==0:
-        cbar = fig.colorbar(im, ax=ax, orientation = 'vertical', fraction = 0.05, pad = 0.05)
+    im = ax[i].imshow(H_simu[i + 12], vmin=0, vmax=500)
+    if i == 0:
+        cbar = fig.colorbar(im, ax=ax, orientation="vertical", fraction=0.05, pad=0.05)
 plt.show()
