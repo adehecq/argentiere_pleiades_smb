@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Script used to simulate 100 realistic bed topographies, compatible with the observations, using Seuqnetial Gaussian Simulations (SGS).
+Script used to simulate 100 realistic bed topographies, compatible with the observations, using Sequential Gaussian Simulations (SGS).
 
-Authors: AUguste Basset, Amaury Dehecq
+Authors: Auguste Basset, Amaury Dehecq
 """
 import geopandas as gpd
 import geoutils as gu
