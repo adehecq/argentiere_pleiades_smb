@@ -1,10 +1,11 @@
 """
-Prepare the bed elevation data (Adrien's bed, GPR obs) to be in the right format and coregistered to the Pleiades DEMs.
-- Convert the bed provided by Adrien in .dat format into a Gtiff in UTM32.
-- The DEM is coregistered to the 2019-08-25 Pleiades DEM outside Argentiere extent to be coherent with all other Pleiades DEMs used in this study.
-There is a ~60 m vertical shift between both. Most of it is due to the fact that Adrien's data is expressed w.r.t. to the geoid (most likely IGN RAF09) while Luc's Pleiades DEMs are w.r.t. the ellipsoid, which causes a ~53 m difference. The rest may be due to the fact that Luc's Pleiades DEMs are only coregistered relative to each other, but most likely free floating.
-This means the Pleiades elevations are not true elevation!
-- Apply the same vertical shift to the GPR observations.
+Prepare the bed elevation data (Adrien's bed, GPR obs) to be in the right format and same vertical reference as Pleiades DEMs, i.e ellipsoid.
+- Convert the bed provided by Adrien in matlab format into a Gtiff in UTM32.
+- The vertical datum is shifted from IGN RAF09 to ellipsoid.
+- The same is done for the GPR observations
+
+NB: There is a vertical shift of 6.6 m and horizontal east/north shift of (4.04 m, -8.88 m ) between our 20190825 Pleiades DEM and the one provided by Adrien, meaning that all Pleiades DEM are probably not exactly aligned with all other datasets...
+See old script code/archived/prepare_bed_data.py.
 
 Author: Amaury Dehecq
 """
@@ -15,25 +16,15 @@ import geopandas as gpd
 import geoutils as gu
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import rasterio as rio
 import xdem
+from scipy.io import loadmat
 
-# Read input data
-dem_bed_adrien = pd.read_csv("data/IceTHX/orig/DEMbed_argentiere.dat", delimiter=" ", names=["X", "Y", "Z"])
-bed_x = dem_bed_adrien.X.values
-bed_y = dem_bed_adrien.Y.values
-bed_z = dem_bed_adrien.Z.values
-
-# Add missing 2 in front of all y values (due to surfer)
-bed_y = bed_y + 2e6
-
-# Reshape to 2D
-ncols = len(np.unique(bed_x))
-nrows = len(np.unique(bed_y))
-bed_x = bed_x.reshape((nrows, ncols))
-bed_y = bed_y.reshape((nrows, ncols))
-bed_z = bed_z.reshape((nrows, ncols))
+# - Load Adrien's bed - #
+bed_elmer = loadmat("data/IceTHX/orig/Bed_Elmer.mat")
+bed_x = bed_elmer["X"]
+bed_y = bed_elmer["Y"]
+bed_z = bed_elmer["Zbed"]
 
 # Calculate image transform and convert to Raster
 dx = bed_x[0, 1] - bed_x[0, 0]
@@ -43,10 +34,10 @@ bed_rst = gu.Raster.from_array(np.flipud(bed_z), transform=transform, crs="EPSG:
 
 # Reproject to UTM32 and save - only used for comparison with raw obs
 # bed_rst_utm = bed_rst.reproject(dst_crs="EPSG:32632")
-# os.makedirs("output/IceTHX", exist_ok=True)
-# bed_rst_utm.save("output/IceTHX/dem_bed_adrien_utm32_unshifted.tif")
+# os.makedirs("data/IceTHX/processed", exist_ok=True)
+# bed_rst_utm.save("data/IceTHX/processed/dem_bed_adrien_utm32_unshifted.tif")
 
-# optionally change vertical datum, from IGN90 to ellipsoid (presumably used for Pleiades)
+# - Change vertical datum, from IGN90 to ellipsoid (presumably used for Pleiades) - #
 # Does not work with original CRS, first need to convert to UTM32...
 bed_rst_utm = bed_rst.reproject(dst_crs="EPSG:32632")
 bed_rst_vref = xdem.DEM(bed_rst_utm, vcrs="fr_ign_RAF09.tif")
@@ -55,33 +46,39 @@ bed_rst_vref.to_vcrs("Ellipsoid")
 plt.title("Difference RAF09 - ellipsoid")
 plt.show()
 
-# Coregister Adrien's bed to Pleiades 2019-08-25, which is the DEM used outside of Argentiere
-# Use Nuth & Kaab + vertical shift
-print("\nCoregistering...")
-pleiades_dem = xdem.DEM("data/dh/DEMs/20190825_DEM_4m_shift_H-V_clip.tif")
-bed_rst_coreg, coreg_method, stats, inlier_mask = xdem.coreg.dem_coregistration(
-    bed_rst, pleiades_dem, verbose=True, plot=True, shp_list=["data/GIS/Argentiere_outline_201809.shp"]
-)
-
-# Plot
-ddem_coreg = pleiades_dem - bed_rst_coreg.reproject(pleiades_dem)
-ddem_coreg.show(vmin=-5, vmax=5, cmap="coolwarm_r")
-plt.title("Pleiades 2019-08-25 - Adrien's bed")
-plt.show()
-
-# Reproject to UTM32 and save
-bed_rst_utm = bed_rst_coreg.reproject(dst_crs="EPSG:32632", silent=True)
+# Save
 os.makedirs("data/IceTHX/processed", exist_ok=True)
 bed_rst_utm.save("data/IceTHX/processed/dem_bed_adrien_utm32.tif")
 
-# Calculate thickness for fictive date and save
-# TODO: check issue with interpolated DEM (issue #2) and re-run
+# - Calculate thickness - #
+# Calculate thickness for fictive date
 dem_med_date = xdem.DEM("output/dem_2017-02-15/dem_2017-02-15_interp_filtered.tif")
-thick = dem_med_date - bed_rst_coreg.reproject(dem_med_date)
-thick.data[thick.data < 0] = 0  # Filter a few negative thickness values
-thick.save("output/IceTHX/thickness_adrien_2017-02-15_utm32.tif")
+thick = dem_med_date.reproject(bed_rst_vref) - bed_rst_vref
 
-# -- Apply same transformation to the GPR observations -- #
+# Mask few pixels with negative values and re-interpolate between valid pixels and edges set at 0
+thick_fixed = thick.copy()
+thick_fixed.set_mask(thick_fixed.data < 0)
+thick_fixed.data[thick.data.mask] = 0
+thick_fixed.data.mask[thick.data.mask] = False
+thick_fixed.data = rio.fill.fillnodata(thick_fixed.data)
+thick_fixed.data.mask = thick.data.mask
+
+# Plot results
+fig = plt.figure(figsize=(18, 6))
+plt.suptitle("Calculated thickness")
+ax1 = plt.subplot(131)
+thick.show(ax=ax1, title="Full range")
+ax2 = plt.subplot(132, sharex=ax1, sharey=ax1)
+thick.show(ax=ax2, vmin=-30, vmax=30, cmap="RdYlBu", title="Zoom around 0")
+ax3 = plt.subplot(133, sharex=ax1, sharey=ax1)
+thick_fixed.show(ax=ax3, vmin=-30, vmax=30, cmap="RdYlBu", title="After fixing negative values")
+plt.show()
+
+# Save
+thick_fixed.save("data/IceTHX/processed/thickness_adrien_2017-02-15_utm32.tif")
+
+
+# -- Change vertical datum for the GPR observations -- #
 
 # Load GPR data
 bed_obs_ds = gpd.read_file("data/IceTHX/orig/zbed_arg_measured_UTM32N.shp")
@@ -99,11 +96,8 @@ raf09_ccrs = xdem.vcrs._build_ccrs_from_crs_and_vcrs(bed_obs_ds.crs, raf09)
 ellipsoid = xdem.vcrs._vcrs_from_user_input("Ellipsoid")
 ellipsoid_ccrs = xdem.vcrs._build_ccrs_from_crs_and_vcrs(bed_obs_ds.crs, ellipsoid)
 
+# Apply vertical transformation
 bed_obs_z_shifted = xdem.vcrs._transform_zz(raf09_ccrs, ellipsoid_ccrs, bed_obs_z, bed_obs_y, bed_obs_z)
-
-# Apply also vertical shift estimated during coreg
-vshift = coreg_method.pipeline[0]._meta["vshift"] + coreg_method.pipeline[1]._meta["vshift"]
-bed_obs_z_shifted += vshift
 
 # Update pandas' dataset and save
 bed_obs_ds_shifted = bed_obs_ds.copy()
