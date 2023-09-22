@@ -40,7 +40,7 @@ bed_rst = gu.Raster.from_array(np.flipud(bed_z), transform=transform, crs="EPSG:
 
 # - Change vertical datum, from IGN90 to ellipsoid (presumably used for Pleiades) - #
 # Does not work with original CRS, first need to convert to UTM32...
-bed_rst_utm = bed_rst.reproject(dst_crs="EPSG:32632")
+bed_rst_utm = bed_rst.reproject(dst_crs="EPSG:32632", dst_res=bed_rst.res)
 bed_rst_vref = xdem.DEM(bed_rst_utm, vcrs="fr_ign_RAF09.tif")
 bed_rst_vref.to_vcrs("Ellipsoid")
 (bed_rst_vref - bed_rst_utm).show()
