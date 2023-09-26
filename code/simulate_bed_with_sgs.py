@@ -54,6 +54,9 @@ def run_srf(ref_raster, vg_model, conditions, downsampling, ens_no, mask=None):
 
 # ----- Main ----- #
 
+# Whether or not to apply a log transformation to the residuals
+use_log = False
+
 # --- Load input data --- #
 
 # Load Argentiere glacier outline
@@ -141,7 +144,10 @@ plt.show()
 # --- Sequential Gaussian Simulations --- #
 
 # Compute a variogram and fit that variogram to an exponential model
-bin_center, gamma = gs.vario_estimate((zbed_x, zbed_y), res_log)
+if use_log:
+    bin_center, gamma = gs.vario_estimate((zbed_x, zbed_y), res_log)
+else:
+    bin_center, gamma = gs.vario_estimate((zbed_x, zbed_y), res)
 
 # -- Tests to find the best covariance model --
 # Define a set of models to test
@@ -219,7 +225,10 @@ print(f"Took {time.time() - t0} s")
 # Sum (downsampled) simulated bed + reference bed
 H_simu = np.zeros((ens_no, *H_model.shape))
 for k in range(ens_no):
-    H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + np.log(H_model.data[::downsampling, ::downsampling])
+    if use_log:
+        H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + np.log(H_model.data[::downsampling, ::downsampling])
+    else:
+        H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + H_model.data[::downsampling, ::downsampling]
 
 # -- Interpolate missing values (due to downsampling) with linear interpolation -- #
 
@@ -235,7 +244,10 @@ H_simu2 = np.copy(H_simu)
 for i in range(ens_no):
     z = H_simu[i][H_simu[i] != 0]
     interp = griddata(np.transpose(idx_run), z, (row_grid_glacier, col_grid_glacier), method="linear")
-    H_simu2[i][row_grid_glacier, col_grid_glacier] = np.exp(interp)
+    if use_log:
+        H_simu2[i][row_grid_glacier, col_grid_glacier] = np.exp(interp)
+    else:
+        H_simu2[i][row_grid_glacier, col_grid_glacier] = interp
 
 # Save to raster, masking points outside glacier
 os.makedirs("output/simulated_beds_new/", exist_ok=True)
@@ -244,11 +256,18 @@ for k in range(ens_no):
     raster.set_mask(~mask1)
     raster.save(f"output/simulated_beds_new/simulated_bed_{k}.tif")
 
-# plotting
+# plotting first 4 simulations
 fig, ax = plt.subplots(2, 2, sharex=True, sharey=True)
 ax = ax.flatten()
 for i in range(4):
     im = ax[i].imshow(H_simu2[i], vmin=0, vmax=500)
     if i == 0:
         cbar = fig.colorbar(im, ax=ax, orientation="vertical", fraction=0.05, pad=0.05)
+plt.show()
+
+# Plotting std
+stddev = np.std(H_simu2, axis=0)
+plt.imshow(stddev)
+cb = plt.colorbar()
+cb.set_label("Std (m)")
 plt.show()
