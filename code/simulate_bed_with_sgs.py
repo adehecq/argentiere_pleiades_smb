@@ -52,7 +52,8 @@ def run_srf(ref_raster, vg_model, conditions, downsampling, ens_no, mask=None):
     return cond_srf
 
 
-# --------------------------------------------------------------- Main ---------------------------------------------------------
+# ----- Main ----- #
+
 # --- Load input data --- #
 
 # Load Argentiere glacier outline
@@ -137,12 +138,12 @@ plt.gca().set_xlabel("Obs - model residual (m)")
 plt.tight_layout()
 plt.show()
 
-## -------------- Gaussian simulation-----------------##
+# --- Sequential Gaussian Simulations --- #
 
 # Compute a variogram and fit that variogram to an exponential model
 bin_center, gamma = gs.vario_estimate((zbed_x, zbed_y), res_log)
 
-# ------------------Test to find the best covariance model-----------
+# -- Tests to find the best covariance model --
 # Define a set of models to test
 # models = {
 #     "Gaussian": gs.Gaussian,
@@ -170,7 +171,7 @@ ax = plt.gca()
 # fit all models to the estimated variogram
 for model in models:
     fit_model = models[model](dim=2)
-    para, pcov, r2 = fit_model.fit_variogram(bin_center, gamma, return_r2=True)
+    para, pcov, r2 = fit_model.fit_variogram(bin_center, gamma, nugget=True, return_r2=True)
     fit_model.plot(x_max=3000, ax=ax)
     scores[model] = r2
 
@@ -181,9 +182,8 @@ print("RANKING by Pseudo-r2 score")
 for i, (model, score) in enumerate(ranking, 1):
     print(f"{i:>6}. {model:>15}: {score:.5}")
 plt.show()
-# --------------------------------------------------------------------
 
-# Select best model and fit again, with nugget
+# -- Select "best" model and fit again --
 fit_model = gs.Exponential(dim=2)
 fit_model.fit_variogram(bin_center, gamma, nugget=True)
 
@@ -197,16 +197,16 @@ plt.show()
 mask1 = arg_outline.create_mask(H_model)
 mask2 = arg_outline.create_mask(H_model, buffer=H_model.res[0])
 final_mask = mask2 & ~mask1
+
+# Add "fake" observations at 0 on glacier edges
 idx_contour = np.where(final_mask.data)
 res_contour = np.ones(np.size(idx_contour, 1)) * 0.001
 res = np.concatenate((res, res_contour))
-res_log = np.concatenate((res_log, res_contour))
-# res now contains residuals on measurements sites and on glacier contour
-# modify zbed_x and zbed_y accordingly
+res_log = np.concatenate((res_log, np.log(res_contour)))
 zbed_x = np.concatenate((zbed_x, idx_contour[0]))
 zbed_y = np.concatenate((zbed_y, idx_contour[1]))
 
-# run simulations
+# -- Run simulations --
 downsampling = 20
 ens_no = 4
 conditions = np.array([zbed_x, zbed_y, res_log])
@@ -216,15 +216,12 @@ t0 = time.time()
 cond_srf = run_srf(H_model, fit_model, conditions, downsampling=downsampling, ens_no=ens_no)
 print(f"Took {time.time() - t0} s")
 
-# - Replace simulations on the glacier with reference value of bed topography - #
-
-H_simu = np.zeros((ens_no, *H_model.shape))
-
 # Sum (downsampled) simulated bed + reference bed
+H_simu = np.zeros((ens_no, *H_model.shape))
 for k in range(ens_no):
     H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + np.log(H_model.data[::downsampling, ::downsampling])
 
-# - Interpolate missing values (due to downsampling) with linear interpolation -#
+# -- Interpolate missing values (due to downsampling) with linear interpolation -- #
 
 # Indexes where simulations where run
 idx_run = np.where(H_simu[0] != 0)
@@ -240,7 +237,7 @@ for i in range(ens_no):
     interp = griddata(np.transpose(idx_run), z, (row_grid_glacier, col_grid_glacier), method="linear")
     H_simu2[i][row_grid_glacier, col_grid_glacier] = np.exp(interp)
 
-# Save to raster
+# Save to raster, masking points outside glacier
 os.makedirs("output/simulated_beds_new/", exist_ok=True)
 for k in range(ens_no):
     raster = gu.Raster.from_array(H_simu2[k], H_model.transform, H_model.crs, nodata=H_model.nodata)
