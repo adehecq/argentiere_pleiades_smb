@@ -228,8 +228,9 @@ idx_contour = np.where(final_mask.data)
 res_contour = np.ones(np.size(idx_contour, 1)) * 0.001
 res = np.concatenate((res, res_contour))
 res_log = np.concatenate((res_log, np.log(res_contour)))
-zbed_x = np.concatenate((zbed_x, idx_contour[0]))
-zbed_y = np.concatenate((zbed_y, idx_contour[1]))
+grid_x, grid_y = H_model.coords()
+zbed_x = np.concatenate((zbed_x, grid_x[idx_contour]))
+zbed_y = np.concatenate((zbed_y, grid_y[idx_contour]))
 
 # -- Run simulations --
 
