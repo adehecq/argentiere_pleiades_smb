@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Script used to simulate 100 realistic bed topographies, compatible with the observations, using Sequential Gaussian Simulations (SGS).
+All tunable arguments are at the beginning of main.
 
 Authors: Auguste Basset, Amaury Dehecq
 """
@@ -19,14 +20,14 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import griddata
 
 
-def run_srf(ref_raster, vg_model, conditions, downsampling, ens_no, mask=None):
+def run_srf(ref_raster, vg_model, conditions, downsampling, n_simu, mask=None):
     """
     Simulate conditioned random fields using a reference raster grid, a variogram model and conditions.
 
     ref_raster: the reference raster to use for the output grid
     vg_model: the variogram model as estimated with gstools
     conditions: a 2D array of shape (3, N) containing the x, y and obs at each known point
-    ens_no: number of simulations to run
+    n_simu: number of simulations to run
     mask: if not None, simulations will be calculated only where mask is True. Must be of same shape as ref_raster.
     """
     # Run kriging on input conditions and variogram model and create CondSRF instance
@@ -47,13 +48,15 @@ def run_srf(ref_raster, vg_model, conditions, downsampling, ens_no, mask=None):
 
     # seeded ensemble generation
     seed = gs.random.MasterRNG(20170519)
-    for i in range(ens_no):
+    for i in range(n_simu):
         cond_srf(seed=seed(), store=[f"fld{i}", False, False])
 
     return cond_srf
 
 
 # ----- Main ----- #
+
+# - A list of arguments that can be changed -
 
 # Whether or not to apply a log transformation to the residuals
 use_log = True
@@ -63,6 +66,10 @@ if use_log:
     outdir = os.path.join("output", "simulated_beds_log")
 else:
     outdir = os.path.join("output", "simulated_beds")
+
+# Resolution and number of simulations
+downsampling = 20
+n_simu = 4
 
 # --- Load input data --- #
 
@@ -224,18 +231,17 @@ zbed_x = np.concatenate((zbed_x, idx_contour[0]))
 zbed_y = np.concatenate((zbed_y, idx_contour[1]))
 
 # -- Run simulations --
-downsampling = 20
-ens_no = 4
+
 conditions = np.array([zbed_x, zbed_y, res_log])
 
 print(f"Starting SGS at {time.strftime('%H:%M:%S', time.localtime())}")
 t0 = time.time()
-cond_srf = run_srf(H_model, fit_model, conditions, downsampling=downsampling, ens_no=ens_no)
+cond_srf = run_srf(H_model, fit_model, conditions, downsampling=downsampling, n_simu=n_simu)
 print(f"Took {time.time() - t0} s")
 
 # Sum (downsampled) simulated bed + reference bed
-H_simu = np.zeros((ens_no, *H_model.shape))
-for k in range(ens_no):
+H_simu = np.zeros((n_simu, *H_model.shape))
+for k in range(n_simu):
     if use_log:
         H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + np.log(
             H_model.data[::downsampling, ::downsampling]
@@ -258,7 +264,7 @@ row_grid_glacier, col_grid_glacier = np.meshgrid(
 
 # Interpolate for each simulation
 H_simu = np.copy(H_simu)
-for i in range(ens_no):
+for i in range(n_simu):
     z = H_simu[i][H_simu[i] != 0]
     interp = griddata(np.transpose(idx_run), z, (row_grid_glacier, col_grid_glacier), method="linear")
     if use_log:
@@ -272,7 +278,7 @@ for i in range(ens_no):
 # Save to raster
 os.makedirs(outdir, exist_ok=True)
 print(f"Saving output files in {outdir}")
-for k in range(ens_no):
+for k in range(n_simu):
     raster = gu.Raster.from_array(H_simu[k], H_model.transform, H_model.crs, nodata=H_model.nodata)
     raster.save(os.path.join(outdir, f"simulated_thickness_{k}.tif"))
 
