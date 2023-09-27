@@ -68,6 +68,7 @@ else:
     outdir = os.path.join("output", "simulated_beds")
 
 # Resolution and number of simulations
+# Running at 1/2 resolution for 100 simulation takes ~5h on 16 cores
 downsampling = 20
 n_simu = 4
 
