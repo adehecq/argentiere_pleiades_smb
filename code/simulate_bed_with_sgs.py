@@ -5,6 +5,9 @@ Script used to simulate 100 realistic bed topographies, compatible with the obse
 
 Authors: Auguste Basset, Amaury Dehecq
 """
+import os
+import time
+
 import geopandas as gpd
 import geoutils as gu
 import gstools as gs
@@ -14,8 +17,6 @@ import numpy as np
 import pandas
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import griddata
-import time
-import os
 
 
 def run_srf(ref_raster, vg_model, conditions, downsampling, ens_no, mask=None):
@@ -236,9 +237,13 @@ print(f"Took {time.time() - t0} s")
 H_simu = np.zeros((ens_no, *H_model.shape))
 for k in range(ens_no):
     if use_log:
-        H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + np.log(H_model.data[::downsampling, ::downsampling])
+        H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + np.log(
+            H_model.data[::downsampling, ::downsampling]
+        )
     else:
-        H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + H_model.data[::downsampling, ::downsampling]
+        H_simu[k][::downsampling, ::downsampling] = (
+            cond_srf.all_fields[k].T + H_model.data[::downsampling, ::downsampling]
+        )
 
 # -- Interpolate missing values (due to downsampling) with linear interpolation -- #
 
@@ -247,7 +252,9 @@ idx_run = np.where(H_simu[0] != 0)
 
 # Grid (over glaciers) where to interpolate
 rowmin, rowmax, colmin, colmax = gu.raster.get_valid_extent(np.where(mask1.data == 0, np.nan, 1))
-row_grid_glacier, col_grid_glacier = np.meshgrid(np.arange(rowmin, rowmax + 1), np.arange(colmin, colmax + 1), indexing="ij")
+row_grid_glacier, col_grid_glacier = np.meshgrid(
+    np.arange(rowmin, rowmax + 1), np.arange(colmin, colmax + 1), indexing="ij"
+)
 
 # Interpolate for each simulation
 H_simu = np.copy(H_simu)
