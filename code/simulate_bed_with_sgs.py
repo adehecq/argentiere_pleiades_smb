@@ -1,97 +1,94 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 29 14:34:39 2023
+Script used to simulate 100 realistic bed topographies, compatible with the observations, using Sequential Gaussian Simulations (SGS).
+All tunable arguments are at the beginning of main.
 
-@author: bassetau
+Authors: Auguste Basset, Amaury Dehecq
 """
-import geoutils as gu
-import matplotlib.pyplot as plt
+import os
+import time
+
 import geopandas as gpd
-import pandas
-import numpy as np
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-import matplotlib
+import geoutils as gu
 import gstools as gs
-import pyvista as pv
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import griddata
 
 
-def insert_zeros(array):
-    
-    original_shape=array.shape
-    new_shape=(original_shape[0], original_shape[1]+1, original_shape[2])
-    new_array=np.zeros(new_shape)
-    new_array[:,:-1,:] = array
-    
-    return new_array
-    
-def run_srf(H_model, vg_model, downsampling, ens_no):
+def run_srf(ref_raster, vg_model, conditions, downsampling, n_simu, mask=None):
+    """
+    Simulate conditioned random fields using a reference raster grid, a variogram model and conditions.
 
-    global H_simu
-    # Create the kriging grid relative to the considered zone
-    nrows, ncols = H_model.res
-
-    grid = pv.UniformGrid()
-    # Grid origin
-    grid.origin = (H_model.bounds.left, H_model.bounds.top, 0)
-    # Cell sizes
-    grid.spacing = (ncols//downsampling, nrows//downsampling, 1)
-    # Number of cells in each direction
-    grid.dimensions = (H_model.width//downsampling, H_model.height//downsampling, 1)
-
-    # conditions
-    cond_pos = list([list(zbed_x), list(zbed_y)])
-    cond_val = list(res)
-
-    # Kriging and creating a condSrf class object
-    krig = gs.krige.Ordinary(vg_model, cond_pos=cond_pos, cond_val=cond_val)
-    krig.mesh(grid, name="Residuals (obs-mod)")
-    # grid now has the residual scalar field and kriging variance as data arrays.
+    ref_raster: the reference raster to use for the output grid
+    vg_model: the variogram model as estimated with gstools
+    conditions: a 2D array of shape (3, N) containing the x, y and obs at each known point
+    n_simu: number of simulations to run
+    mask: if not None, simulations will be calculated only where mask is True. Must be of same shape as ref_raster.
+    """
+    # Run kriging on input conditions and variogram model and create CondSRF instance
+    krig = gs.krige.Ordinary(vg_model, cond_pos=conditions[:2], cond_val=conditions[2])
     cond_srf = gs.CondSRF(krig)
 
-    # same output positions for all ensemble members
-    mask = arg_outline.create_mask(H_model)
-    x_model, y_model = H_model.coords()
-    x_model = x_model[0]
-    y_model = y_model[:,0]
-        
-    cond_srf.set_pos([x_model[::downsampling], y_model[::downsampling]], "structured")
-    
+    # Set position of pixels where to run simulations
+    x_model, y_model = ref_raster.coords()
+    if mask is None:
+        x_model = x_model[0]
+        y_model = y_model[:, 0]
+        cond_srf.set_pos([x_model[::downsampling], y_model[::downsampling]], "structured")
+    else:
+        x_model = x_model[::downsampling, ::downsampling]
+        y_model = y_model[::downsampling, ::downsampling]
+        mask_dw = mask[::downsampling, ::downsampling]
+        cond_srf.set_pos([x_model[mask_dw], y_model[mask_dw]], "unstructured")
+
     # seeded ensemble generation
     seed = gs.random.MasterRNG(20170519)
-    for i in range(ens_no):
+    for i in range(n_simu):
         cond_srf(seed=seed(), store=[f"fld{i}", False, False])
-
-    # fig, ax = plt.subplots(4, 5, sharex=True, sharey=True)
-    # ax = ax.flatten()
-    # for i in range(ens_no):
-    #     # on peut afficher les champs simulés seuls ou bien replacés sur le glacier
-    #     im = ax[i].imshow(cond_srf[i].T, origin="lower")
-    #     if i==1:
-    #         cbar = fig.colorbar(im, ax=ax, orientation = 'vertical', fraction = 0.05, pad = 0.05)
-    # plt.show()
 
     return cond_srf
 
-# --------------------------------------------------------------- Main ---------------------------------------------------------
+
+# ----- Main ----- #
+
+# - A list of arguments that can be changed -
+
+# Whether or not to apply a log transformation to the residuals
+use_log = True
+
+# output directory
+if use_log:
+    outdir = os.path.join("output", "simulated_beds_log")
+else:
+    outdir = os.path.join("output", "simulated_beds")
+
+# Resolution and number of simulations
+# Running at 1/2 resolution for 100 simulation takes ~5h on 16 cores
+downsampling = 20
+n_simu = 4
+
 # --- Load input data --- #
 
 # Load Argentiere glacier outline
-arg_outline = gu.Vector(r"C:\Users\Aug\Desktop\Stage_IGE\Data\GIS\outline_bed_v4.shp")
+arg_outline = gu.Vector(r"data/gis/outline_pleiades_2020-09-08.shp")
 
 # Load thickness obs
-zbed_ds = gpd.read_file(r"C:\Users\Aug\Desktop\Stage_IGE\Data\GIS\Zbed_Arg_Measured_UTM32N.shp")
+zbed_ds = gpd.read_file(r"data/ice_thx/processed/zbed_arg_measured_UTM32N_shifted.shp")
 zbed = zbed_ds.Field_3
 zbed_x = zbed_ds.geometry.x
 zbed_y = zbed_ds.geometry.y
 
 # load data from fictive DEM to be coherent with methodology
-mnt_fict = gu.Raster(r"C:\Users\Aug\Desktop\Stage_IGE\Data\dH\MNT\MNT_fict.tif")
+mnt_fict = gu.Raster(r"output/dem_2017-02-15/dem_2017-02-15_interp_filtered.tif")
 zsurf = mnt_fict.value_at_coords(zbed_x, zbed_y)
 
 # Calculate thickness and remove bad values
-zsurf[zsurf==0] = np.nan
+zsurf[zsurf == 0] = np.nan
 zsurf = pandas.Series(zsurf.flatten())
 H_obs = zsurf - zbed
 H_obs[H_obs < 0] = np.nan
@@ -100,23 +97,27 @@ valid_obs = np.where(np.isfinite(H_obs))
 H_obs = H_obs.values[valid_obs]
 zbed_x = zbed_x.values[valid_obs]
 zbed_y = zbed_y.values[valid_obs]
+zbed = zbed.values[valid_obs]
 
-# Load modeled bed
-H_model = gu.Raster(r"/home/bassetau/Documents/Auguste/Accu_Argentiere/IceTHX/Bed_Adrien.tif")
-H_model.crop(arg_outline)
+# Load modeled bed and crop to glacier extent with 200 m buffer
+H_model = gu.Raster(r"data/ice_thx/processed/thickness_adrien_2017-02-15_utm32.tif")
+left, bottom, right, top = list(arg_outline.bounds)
+H_model.crop([left - 200, bottom - 200, right + 200, top + 200])
+# H_model.crop(arg_outline)
 
 # --- Prepare data --- #
 
 # Extract modeled H at obs
-H_model_obs = H_model.value_at_coords(zbed_x, zbed_y)
+H_model_obs = H_model.value_at_coords(zbed_x, zbed_y).squeeze()
 H_model_obs[H_model_obs == H_model.nodata] = np.nan
 
 # Calculate Pearson correlation coeff
 r = np.corrcoef(H_obs[np.isfinite(H_model_obs)], H_model_obs[np.isfinite(H_model_obs)])[0, 1]
 
 # Calculate model residuals
-res = np.log(H_obs) - np.log(H_model_obs)
-
+res = H_obs - H_model_obs
+res_log = np.log(H_obs) - np.log(H_model_obs)
+res_log[np.isinf(res_log)] = np.nan  # when H = 0, res are infinite
 
 # - Plot -
 
@@ -124,12 +125,12 @@ fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(12, 12))
 
 # Modeled H
 H_model.show(ax=axes[0, 0], cbar_title="Modeled thickness (m)", vmin=0, vmax=400)
-arg_outline.show(fc='none', ec='k', ax=axes[0, 0])
+arg_outline.show(fc="none", ec="k", ax=axes[0, 0])
 
 # Residuals map
 cmap = "coolwarm"
 vmax = 150
-arg_outline.show(fc='none', ec='k', ax=axes[0, 1])
+arg_outline.show(fc="none", ec="k", ax=axes[0, 1])
 sc = axes[0, 1].scatter(zbed_x, zbed_y, c=res, vmin=-vmax, vmax=vmax, cmap=cmap)
 # make sure cmap is same height as subplot
 divider = make_axes_locatable(axes[0, 1])
@@ -138,13 +139,13 @@ norm = matplotlib.colors.Normalize(vmin=-vmax, vmax=150)
 cb = matplotlib.colorbar.ColorbarBase(cax, cmap=cmap, norm=norm)
 # cb = plt.colorbar(sc)
 cb.set_label("Residual obs - model (m)")
-            
+
 # Residuals scatterplot
 plt.sca(axes[1, 0])
-plt.plot(H_obs, H_model_obs, ls='', marker='+', c="C0")
+plt.plot(H_obs, H_model_obs, ls="", marker="+", c="C0")
 plt.xlabel("Observed thickness (m)")
 plt.ylabel("Modeled thickness (m)")
-plt.axline((0, 0), slope=1, color='k', ls='--')  # Plot 1:1 line
+plt.axline((0, 0), slope=1, color="k", ls="--")  # Plot 1:1 line
 plt.title(f"R2 = {r**2:.2f}")
 
 # Residuals histogram
@@ -153,37 +154,48 @@ plt.hist(res, bins=40)
 plt.gca().set_xlabel("Obs - model residual (m)")
 
 plt.tight_layout()
+plt.savefig(os.path.join(outdir, "resiudals_plot.png"), dpi=200)
 plt.show()
 
-## -------------- Gaussian simulation-----------------##
+# --- Sequential Gaussian Simulations --- #
 
 # Compute a variogram and fit that variogram to an exponential model
-bin_center, gamma = gs.vario_estimate((zbed_x,zbed_y), res)
+if use_log:
+    bin_center, gamma = gs.vario_estimate((zbed_x, zbed_y), res_log)
+else:
+    bin_center, gamma = gs.vario_estimate((zbed_x, zbed_y), res)
 
-#------------------Test to find the best covariance model-----------
+# -- Tests to find the best covariance model --
 # Define a set of models to test
+# models = {
+#     "Gaussian": gs.Gaussian,
+#     "Exponential": gs.Exponential,
+#     "Matern": gs.Matern,
+#     "Stable": gs.Stable,
+#     "Rational": gs.Rational,
+#     "Circular": gs.Circular,
+#     "Spherical": gs.Spherical,
+#     "SuperSpherical": gs.SuperSpherical,
+#     "JBessel": gs.JBessel,
+# }
 models = {
-"Gaussian": gs.Gaussian,
-"Exponential": gs.Exponential,
-"Matern": gs.Matern,
-"Stable": gs.Stable,
-"Rational": gs.Rational,
-"Circular": gs.Circular,
-"Spherical": gs.Spherical,
-"SuperSpherical": gs.SuperSpherical,
-"JBessel": gs.JBessel,
+    "Gaussian": gs.Gaussian,
+    "Exponential": gs.Exponential,
+    "Matern": gs.Matern,
 }
+
 scores = {}
 
 # Iterate over all models, fit their variogram and calculate the r2 score.
 # plot the estimated variogram
+plt.figure()
 plt.scatter(bin_center, gamma, color="k", label="data")
 ax = plt.gca()
 # fit all models to the estimated variogram
 for model in models:
     fit_model = models[model](dim=2)
-    para, pcov, r2 = fit_model.fit_variogram(bin_center, gamma, return_r2=True)
-    fit_model.plot(x_max = 3000, ax=ax)
+    para, pcov, r2 = fit_model.fit_variogram(bin_center, gamma, nugget=True, return_r2=True)
+    fit_model.plot(x_max=3000, ax=ax)
     scores[model] = r2
 
 # Create a ranking based on the score and determine the best models
@@ -193,149 +205,112 @@ print("RANKING by Pseudo-r2 score")
 for i, (model, score) in enumerate(ranking, 1):
     print(f"{i:>6}. {model:>15}: {score:.5}")
 plt.show()
-#--------------------------------------------------------------------
 
-#fit_model = gs.Exponential(dim = 2, var = 2658.4120995073145, len_scale = 440.7028787096736, nugget = 356.8240249489487)
-fit_model = gs.Exponential(dim = 2)
+# -- Select "best" model and fit again --
+fit_model = gs.Exponential(dim=2)
 fit_model.fit_variogram(bin_center, gamma, nugget=True)
 
-ax = fit_model.plot(x_max = max(bin_center))
+ax = fit_model.plot(x_max=max(bin_center))
 ax.scatter(bin_center, gamma)
-gs.covmodel.plot.plot_variogram(fit_model, ax=ax)
 plt.xlabel("Lag Distance")
-plt.ylabel("Variogram")
+plt.ylabel("Variance")
+plt.title(f"Sill: {fit_model.var:g} m2, range: {fit_model.len_scale:.0f} m")
+plt.savefig(os.path.join(outdir, "variogram_model.png"), dpi=200)
 plt.show()
 
-
-# file_zone = r'C:\Users\Aug\Desktop\Stage IGE\Data\IceTHX\Argentiere_part2.gpkg'
-
-# fields = zonal_srf_bed(zbed_ds, H_model, file_zone, fit_model).all_fields
-# x_model_zone, y_model_zone = zonal_coord(H_model)
-#H_cond.value_at_coords(x_model_zone, y_model_zone) = fields
-
-# create glacier contour 
+# create glacier contour
 mask1 = arg_outline.create_mask(H_model)
-mask2 = arg_outline.create_mask(H_model, buffer=10)
-final_mask = (mask2 & ~mask1)
+mask2 = arg_outline.create_mask(H_model, buffer=H_model.res[0])
+final_mask = mask2 & ~mask1
+
+# Add "fake" observations at 0 on glacier edges
 idx_contour = np.where(final_mask.data)
-res_contour = np.ones(np.size(idx_contour,1))*0.001
+res_contour = np.ones(np.size(idx_contour, 1)) * 0.001
 res = np.concatenate((res, res_contour))
-# res now contains residuals on measurements sites and on glacier contour
-# modify zbed_x and zbed_y accordingly
+res_log = np.concatenate((res_log, np.log(res_contour)))
 zbed_x = np.concatenate((zbed_x, idx_contour[0]))
 zbed_y = np.concatenate((zbed_y, idx_contour[1]))
 
-# modify idx_contour and mask1 for what follows
-idx_contour = np.asarray(idx_contour)
-idx_contour = np.delete(idx_contour, -1, axis=1)
-idx_contour = np.delete(idx_contour, -1, axis=1)
-idx_contour = np.delete(idx_contour, -1, axis=1)
-final_mask_array = np.delete(final_mask.data, -1, axis=0)
+# -- Run simulations --
 
-# run simulations
-downsampling=2
-ens_no = 100
-cond_srf = run_srf(H_model, fit_model, downsampling=downsampling, ens_no=ens_no)
+conditions = np.array([zbed_x, zbed_y, res_log])
 
-# replace simulations on the glacier with reference value of bed topography
-# first, find (x,y) coordinates of on-glacier pixels based on every pixels
-x_model, y_model = H_model.coords()
-x_model = x_model[0]
-y_model = y_model[:,0]
-y_model = np.delete(y_model, H_model.shape[0]-1,0)
-on_glacier_coords = []
-for i in x_model:
-    for j in y_model:
-        if H_model.value_at_coords(i,j) != H_model.nodata:
-            on_glacier_coords.append((i,j))
-            
-# Retrieve (x,y) on-glacier coordinates
-x_on_glacier = []
-y_on_glacier = []
-for elem in on_glacier_coords:
-    x_on_glacier.append(elem[0])
-    y_on_glacier.append(elem[1])
-i_on_glacier, j_on_glacier = H_model.xy2ij(x_on_glacier, y_on_glacier)
+print(f"Starting SGS at {time.strftime('%H:%M:%S', time.localtime())}")
+t0 = time.time()
+cond_srf = run_srf(H_model, fit_model, conditions, downsampling=downsampling, n_simu=n_simu)
+print(f"Took {time.time() - t0} s")
 
-# we ran simulation for :
-x_run = x_model[::downsampling]
-x_run = x_run.tolist()
-y_run = y_model[::downsampling]
-y_run = y_run.tolist()
+# Sum (downsampled) simulated bed + reference bed
+H_simu = np.zeros((n_simu, *H_model.shape))
+for k in range(n_simu):
+    if use_log:
+        H_simu[k][::downsampling, ::downsampling] = cond_srf.all_fields[k].T + np.log(
+            H_model.data[::downsampling, ::downsampling]
+        )
+    else:
+        H_simu[k][::downsampling, ::downsampling] = (
+            cond_srf.all_fields[k].T + H_model.data[::downsampling, ::downsampling]
+        )
 
-# retrieve coords of simulation AND on-glacier
-x_run_on_glacier = []
-y_run_on_glacier = []
-for x in x_run:
-    for y in y_run:
-        if (x,y) in on_glacier_coords:
-            x_run_on_glacier.append(x)
-            y_run_on_glacier.append(y)
+# -- Interpolate missing values (due to downsampling) with linear interpolation -- #
 
-# convert it to indexes
-i_run_on_glacier, j_run_on_glacier = H_model.xy2ij(x_run_on_glacier, y_run_on_glacier)
-i_run_on_glacier = np.unique(i_run_on_glacier)
-j_run_on_glacier = np.unique(j_run_on_glacier)
+# Indexes where simulations where run
+idx_run = np.where(H_simu[0] != 0)
 
-i_run = []
-j_run = []
-for i in x_run:
-    for j in y_run:
-        k,l = H_model.xy2ij(i,j)
-        i_run.append(k)
-        j_run.append(l)
+# Grid (over glaciers) where to interpolate
+rowmin, rowmax, colmin, colmax = gu.raster.get_valid_extent(np.where(mask1.data == 0, np.nan, 1))
+row_grid_glacier, col_grid_glacier = np.meshgrid(
+    np.arange(rowmin, rowmax + 1), np.arange(colmin, colmax + 1), indexing="ij"
+)
 
-# i_run = np.unique(i_run)
-# j_run = np.unique(j_run)
+# Interpolate for each simulation
+H_simu = np.copy(H_simu)
+for i in range(n_simu):
+    z = H_simu[i][H_simu[i] != 0]
+    interp = griddata(np.transpose(idx_run), z, (row_grid_glacier, col_grid_glacier), method="linear")
+    if use_log:
+        H_simu[i][row_grid_glacier, col_grid_glacier] = np.exp(interp)
+    else:
+        H_simu[i][row_grid_glacier, col_grid_glacier] = interp
 
-# initialize simulated beds arrays
-H_simu = np.zeros((ens_no, np.size(y_model), np.size(x_model)))
-H_model_temp = H_model.data
-H_model_temp = np.delete(H_model_temp, -1, axis = 0)
+    # masking off glacier
+    H_simu[i][~mask1.data] = np.nan
 
-for k in range(ens_no):
-    compt_i = 0
-    compt_j = 0
-    H_simu[k][~final_mask_array] = np.nan
-    for i in i_run_on_glacier:
-        for j in j_run_on_glacier:
-            H_simu[k][i][j] = cond_srf.all_fields[k][compt_j][compt_i] + np.log(H_model_temp[i][j])
-            compt_j+=1
-        compt_j = 0
-        compt_i += 1
-
-# Now we have to interpolate simulated residuals over the all glacier
-# xx, yy = np.meshgrid(i_run, j_run, indexing='ij')
-
-idx_run = np.where(~np.isnan(H_simu[0]))
-idx_run = np.asarray(idx_run)
-
-grid_i, grid_j = np.meshgrid(np.unique(i_on_glacier), np.unique(j_on_glacier))
-for i in range(ens_no):
-    z = H_simu[i][~np.isnan(H_simu[i])]
-    func = griddata(np.transpose(idx_run), z, (grid_i, grid_j), method='linear')
-    H_simu[i] = np.exp(np.transpose(func))
-H_simu = insert_zeros(H_simu)
-
-# on redécoupe selon les limites du glacier
-for k in range(ens_no):
+# Save to raster
+os.makedirs(outdir, exist_ok=True)
+print(f"Saving output files in {outdir}")
+for k in range(n_simu):
     raster = gu.Raster.from_array(H_simu[k], H_model.transform, H_model.crs, nodata=H_model.nodata)
-    raster.set_mask(~mask1)
-    var = k
-    raster.save(f'simulated_bed_{var}.tif')
-    H_simu[k] = raster.to_xarray()
-    H_simu[k][H_simu[k]<0]=np.nan
+    raster.save(os.path.join(outdir, f"simulated_thickness_{k}.tif"))
 
-# # Now we can go back to physical values the values and add reference bed
-# for k in range(ens_no):
-#     H_simu[k] = np.exp(H_simu[k])
-#     H_simu[k][H_simu[k]<0] = np.nan
-
-# plotting
+# plotting first 4 simulations
 fig, ax = plt.subplots(2, 2, sharex=True, sharey=True)
 ax = ax.flatten()
 for i in range(4):
-    im = ax[i].imshow(H_simu[i+12], vmin = 0, vmax = 500)
-    if i==0:
-        cbar = fig.colorbar(im, ax=ax, orientation = 'vertical', fraction = 0.05, pad = 0.05)
+    im = ax[i].imshow(H_simu[i], vmin=0, vmax=500)
+    if i == 0:
+        cbar = fig.colorbar(im, ax=ax, orientation="vertical", fraction=0.05, pad=0.05)
+plt.savefig(os.path.join(outdir, "simu_samples.png"), dpi=200)
+plt.show()
+
+# -- Calculating mean, median and std --
+
+thx_std = np.std(H_simu, axis=0)
+thx_mean = np.mean(H_simu, axis=0)
+thx_median = np.median(H_simu, axis=0)
+
+# Saving to file
+thx_std_rst = gu.Raster.from_array(thx_std, H_model.transform, H_model.crs, nodata=H_model.nodata)
+thx_std_rst.save(os.path.join(outdir, "simulated_thickness_std.tif"))
+
+thx_mean_rst = gu.Raster.from_array(thx_mean, H_model.transform, H_model.crs, nodata=H_model.nodata)
+thx_mean_rst.save(os.path.join(outdir, "simulated_thickness_mean.tif"))
+
+thx_median_rst = gu.Raster.from_array(thx_median, H_model.transform, H_model.crs, nodata=H_model.nodata)
+thx_median_rst.save(os.path.join(outdir, "simulated_thickness_median.tif"))
+
+# Plotting std
+plt.imshow(thx_std)
+cb = plt.colorbar()
+cb.set_label("Std (m)")
 plt.show()
