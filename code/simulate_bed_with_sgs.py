@@ -55,7 +55,13 @@ def run_srf(ref_raster, vg_model, conditions, downsampling, ens_no, mask=None):
 # ----- Main ----- #
 
 # Whether or not to apply a log transformation to the residuals
-use_log = False
+use_log = True
+
+# output directory
+if use_log:
+    outdir = os.path.join("output", "simulated_beds_log")
+else:
+    outdir = os.path.join("output", "simulated_beds")
 
 # --- Load input data --- #
 
@@ -139,6 +145,7 @@ plt.hist(res, bins=40)
 plt.gca().set_xlabel("Obs - model residual (m)")
 
 plt.tight_layout()
+plt.savefig(os.path.join(outdir, "resiudals_plot.png"), dpi=200)
 plt.show()
 
 # --- Sequential Gaussian Simulations --- #
@@ -172,6 +179,7 @@ scores = {}
 
 # Iterate over all models, fit their variogram and calculate the r2 score.
 # plot the estimated variogram
+plt.figure()
 plt.scatter(bin_center, gamma, color="k", label="data")
 ax = plt.gca()
 # fit all models to the estimated variogram
@@ -196,7 +204,9 @@ fit_model.fit_variogram(bin_center, gamma, nugget=True)
 ax = fit_model.plot(x_max=max(bin_center))
 ax.scatter(bin_center, gamma)
 plt.xlabel("Lag Distance")
-plt.ylabel("Variogram")
+plt.ylabel("Variance")
+plt.title(f"Sill: {fit_model.var:g} m2, range: {fit_model.len_scale:.0f} m")
+plt.savefig(os.path.join(outdir, "variogram_model.png"), dpi=200)
 plt.show()
 
 # create glacier contour
@@ -240,34 +250,53 @@ rowmin, rowmax, colmin, colmax = gu.raster.get_valid_extent(np.where(mask1.data 
 row_grid_glacier, col_grid_glacier = np.meshgrid(np.arange(rowmin, rowmax + 1), np.arange(colmin, colmax + 1), indexing="ij")
 
 # Interpolate for each simulation
-H_simu2 = np.copy(H_simu)
+H_simu = np.copy(H_simu)
 for i in range(ens_no):
     z = H_simu[i][H_simu[i] != 0]
     interp = griddata(np.transpose(idx_run), z, (row_grid_glacier, col_grid_glacier), method="linear")
     if use_log:
-        H_simu2[i][row_grid_glacier, col_grid_glacier] = np.exp(interp)
+        H_simu[i][row_grid_glacier, col_grid_glacier] = np.exp(interp)
     else:
-        H_simu2[i][row_grid_glacier, col_grid_glacier] = interp
+        H_simu[i][row_grid_glacier, col_grid_glacier] = interp
 
-# Save to raster, masking points outside glacier
-os.makedirs("output/simulated_beds_new/", exist_ok=True)
+    # masking off glacier
+    H_simu[i][~mask1.data] = np.nan
+
+# Save to raster
+os.makedirs(outdir, exist_ok=True)
+print(f"Saving output files in {outdir}")
 for k in range(ens_no):
-    raster = gu.Raster.from_array(H_simu2[k], H_model.transform, H_model.crs, nodata=H_model.nodata)
-    raster.set_mask(~mask1)
-    raster.save(f"output/simulated_beds_new/simulated_bed_{k}.tif")
+    raster = gu.Raster.from_array(H_simu[k], H_model.transform, H_model.crs, nodata=H_model.nodata)
+    raster.save(os.path.join(outdir, f"simulated_thickness_{k}.tif"))
 
 # plotting first 4 simulations
 fig, ax = plt.subplots(2, 2, sharex=True, sharey=True)
 ax = ax.flatten()
 for i in range(4):
-    im = ax[i].imshow(H_simu2[i], vmin=0, vmax=500)
+    im = ax[i].imshow(H_simu[i], vmin=0, vmax=500)
     if i == 0:
         cbar = fig.colorbar(im, ax=ax, orientation="vertical", fraction=0.05, pad=0.05)
+plt.savefig(os.path.join(outdir, "simu_samples.png"), dpi=200)
 plt.show()
 
+# -- Calculating mean, median and std --
+
+thx_std = np.std(H_simu, axis=0)
+thx_mean = np.mean(H_simu, axis=0)
+thx_median = np.median(H_simu, axis=0)
+
+# Saving to file
+thx_std_rst = gu.Raster.from_array(thx_std, H_model.transform, H_model.crs, nodata=H_model.nodata)
+thx_std_rst.save(os.path.join(outdir, "simulated_thickness_std.tif"))
+
+thx_mean_rst = gu.Raster.from_array(thx_mean, H_model.transform, H_model.crs, nodata=H_model.nodata)
+thx_mean_rst.save(os.path.join(outdir, "simulated_thickness_mean.tif"))
+
+thx_median_rst = gu.Raster.from_array(thx_median, H_model.transform, H_model.crs, nodata=H_model.nodata)
+thx_median_rst.save(os.path.join(outdir, "simulated_thickness_median.tif"))
+
 # Plotting std
-stddev = np.std(H_simu2, axis=0)
-plt.imshow(stddev)
+plt.imshow(thx_std)
 cb = plt.colorbar()
 cb.set_label("Std (m)")
 plt.show()
