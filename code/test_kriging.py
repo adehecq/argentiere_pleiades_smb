@@ -24,6 +24,10 @@ import time
 import os
 
 
+# -- parameters -- #
+outdir = os.path.join("output", "thickness_kriging")
+
+
 # --- Load input data --- #
 
 # Load Argentiere glacier outline
@@ -241,7 +245,7 @@ print(f"Starting kriging at {time.strftime('%H:%M:%S', time.localtime())}")
 t0 = time.time()
 
 # downsampling factor
-dw=1
+dw=2
 
 # with structured mesh, on the whole scene -> slower
 # x_coords = grid_x[0, :]
@@ -307,10 +311,10 @@ err_final.show(vmin=0, cbar_title="Kriging error (m)", ax=ax2)
 arg_outline.show(fc="none", ec="k", ax=ax2)
 
 plt.tight_layout()
+plt.savefig(os.path.join(outdir, "thickness_from_kriging.png"), dpi=200)
 plt.show()
 
 # Save
-outdir = os.path.join("output", "thickness_kriging")
 os.makedirs(outdir, exist_ok=True)
 H_final.save(os.path.join(outdir, "Argentiere_thickness_from_kriging.tif"))
 err_final.save(os.path.join(outdir, "Argentiere_thickness_err_from_kriging.tif"))
