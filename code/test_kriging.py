@@ -22,8 +22,10 @@ import geoutils as gu
 import gstools as gs
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import xdem
 from scipy.signal import fftconvolve
+from sklearn import linear_model
 
 
 def mean_filter_nan(array_in, kernel_width):
@@ -109,6 +111,9 @@ slope_sm[~gl_mask.data] = np.nan
 slope_sm[count <= 1] = np.nan
 slope_sm = slope.copy(new_array=slope_sm)
 
+# Calculate tangent of slope, for the V vs tau relationship
+slope_tan = np.tan(slope_sm * np.pi / 180.)
+
 # Plot input data
 fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(18, 6))
 
@@ -120,7 +125,7 @@ cb.set_label("Thickness (m)")
 velocity.show(ax=axes[1], cbar_title="Velocity (m/yr)", vmax=150)
 arg_outline.show(fc="none", ec="k", ax=axes[1])
 
-slope_sm.show(ax=axes[2], cbar_title="Slope (degree)", vmax=60)
+slope_sm.show(ax=axes[2], cbar_title="Slope (degree)")
 arg_outline.show(fc="none", ec="k", ax=axes[2])
 
 plt.tight_layout()
@@ -129,8 +134,8 @@ plt.show()
 # --- Prepare data --- #
 
 # Extract slope at location of thickness obs
-slope_obs = slope_sm.value_at_coords(zbed_x, zbed_y)
-slope_obs[slope_obs == slope_sm.nodata] = np.nan  # Needed for now as DEM contains nodata values
+slope_obs = slope_tan.value_at_coords(zbed_x, zbed_y)
+slope_obs[slope_obs == slope_tan.nodata] = np.nan  # Needed for now as DEM contains nodata values
 
 # Extract velocity at location of thickness obs
 vel_obs = velocity.value_at_coords(zbed_x, zbed_y)
@@ -138,8 +143,10 @@ vel_obs = velocity.value_at_coords(zbed_x, zbed_y)
 # --- Model H as a function of slope and velocity --- #
 
 # Calculate mean H as a function of slope and velocity
-slope_bins = [0, 2, 4, 6, 8, 10, 20, 40, 90]
-velocity_bins = [0, 10, 20, 30, 40, 50, np.max(vel_obs)]
+# slope_bins = np.tan(np.array([0, 2, 4, 6, 8, 10, 20, 40, np.max(slope)]) * np.pi / 180)
+# velocity_bins = [0, 10, 20, 30, 40, 50, np.max(vel_obs)]
+slope_bins = np.percentile(slope_obs[np.isfinite(slope_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+velocity_bins = np.percentile(vel_obs[np.isfinite(vel_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
 
 df = xdem.spatialstats.nd_binning(
     values=H_obs,
@@ -159,7 +166,7 @@ xdem.spatialstats.plot_1d_binning(
     df,
     var_name="slope",
     statistic_name="mean",
-    label_var="Slope (degrees)",
+    label_var="Slope tangent",
     label_statistic="Mean thickness (m)",
     ax=axes[0],
     min_count=min_count,
@@ -184,7 +191,7 @@ xdem.spatialstats.plot_2d_binning(
     var_name_1="slope",
     var_name_2="velocity",
     statistic_name="mean",
-    label_var_name_1="Slope (degrees)",
+    label_var_name_1="Slope tangent",
     label_var_name_2="Velocity (m/yr)",
     label_statistic="Mean thickness (m)",
     min_count=min_count,
@@ -192,13 +199,74 @@ xdem.spatialstats.plot_2d_binning(
 plt.tight_layout()
 plt.show()
 
-# Interpolate model for H
-H_model = xdem.spatialstats.interp_nd_binning(
-    df, list_var_names=["slope", "velocity"], statistic="mean", min_count=min_count
-)
+# Option 1 - Interpolate model for H
+# H_model = xdem.spatialstats.interp_nd_binning(
+#     df, list_var_names=["slope", "velocity"], statistic="mean", min_count=min_count
+# )
 
+# - Option 2 - Polynomial fit of relationship - #
+
+# Test 1D, but not used
+# Vs slope
+df_sub = df[np.logical_and(df.nd == 1, np.isfinite(pd.IntervalIndex(df["slope"]).mid))].copy()
+xx1 = np.log10(pd.IntervalIndex(df_sub["slope"][df_sub["count"].values > 5]).mid)
+yy1 = np.log10(df_sub["median"][df_sub["count"].values > 5])
+poly_slope = np.polyfit(xx1, yy1, deg=1)
+
+# Vs velocity
+df_sub = df[np.logical_and(df.nd == 1, np.isfinite(pd.IntervalIndex(df["velocity"]).mid))].copy()
+xx2 = np.log10(pd.IntervalIndex(df_sub["velocity"][df_sub["count"].values > 5]).mid)
+yy2 = np.log10(df_sub["median"][df_sub["count"].values > 5])
+poly_vel = np.polyfit(xx2, yy2, deg=1)
+
+plt.figure(figsize=(12, 6))
+
+plt.subplot(121)
+x_reg = [np.min(xx1), np.max(xx1)]
+y_reg = np.polyval(poly_slope, x_reg)
+
+plt.plot(xx1, yy1, "r+")
+plt.plot(x_reg, y_reg, "k-")
+plt.xlabel("Log(tan(slope))")
+plt.ylabel("Log(thickness)")
+
+plt.subplot(122)
+x_reg = [np.min(xx2), np.max(xx2)]
+y_reg = np.polyval(poly_vel, x_reg)
+
+plt.plot(xx2, yy2, "r+")
+plt.plot(x_reg, y_reg, "k-")
+plt.xlabel("Log(velocity)")
+plt.ylabel("Log(thickness)")
+
+plt.show()
+
+# Multivariate regression
+df_sub = df[np.logical_and(df.nd == 2, np.isfinite(pd.IntervalIndex(df["slope"]).mid), np.isfinite(pd.IntervalIndex(df["velocity"]).mid))].copy()
+xx1 = np.log10(pd.IntervalIndex(df_sub["slope"][df_sub["count"].values > 5]).mid)
+xx2 = np.log10(pd.IntervalIndex(df_sub["velocity"][df_sub["count"].values > 5]).mid)
+yy = np.log10(df_sub["median"][df_sub["count"].values > 5])
+
+lin_reg = linear_model.LinearRegression()
+lin_reg.fit(np.transpose([xx1, xx2]), yy)
+
+# Predicition at obs
+valid_obs = np.where(np.isfinite(slope_obs) & np.isfinite(vel_obs))
+H_modeled_obs = np.nan * np.zeros_like(H_obs)
+H_modeled_obs[valid_obs] = 10**lin_reg.predict(np.transpose((np.log10(slope_obs[valid_obs]), np.log10(vel_obs[valid_obs]))))
+
+# Generate full map of modeled H
+x1 = np.log10(slope_tan.data)
+x2 = np.log10(velocity.data)
+valid_x = np.where(np.isfinite(x1) & np.isfinite(x2))
+H_modeled_tmp = 10**lin_reg.predict(np.transpose((x1[valid_x], x2[valid_x])))
+H_modeled = np.nan * np.zeros_like(slope_tan.data)
+H_modeled[valid_x] = H_modeled_tmp
+H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
+
+# - Calculate modeled H - #
 # Calculate modeled H at location of observations
-H_modeled_obs = H_model((slope_obs, vel_obs))
+# H_modeled_obs = H_model((slope_obs, vel_obs))
 
 # Calculate Pearson correlation coeff
 r = np.corrcoef(H_obs[np.isfinite(H_modeled_obs)], H_modeled_obs[np.isfinite(H_modeled_obs)])[0, 1]
@@ -216,9 +284,9 @@ plt.show()
 # Calculate model residuals
 res = H_obs - H_modeled_obs
 
-# Generate full map of modeled H
-H_modeled = H_model((slope_sm.data, velocity.data))
-H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
+# # Generate full map of modeled H
+# H_modeled = H_model((slope_tan.data, velocity.data))
+# H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
 
 # Plot map along with map of residuals
 fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(18, 6))
