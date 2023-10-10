@@ -23,6 +23,40 @@ import gstools as gs
 import matplotlib.pyplot as plt
 import numpy as np
 import xdem
+from scipy.signal import fftconvolve
+
+
+def mean_filter_nan(array_in, kernel_width):
+    """
+    Apply a mean filter to an array array_in, on a square kernel of size kernel_width.
+    The method account for NaN values in array_in and return the count of valid pixels used in the convolution.
+    Inputs:
+    - array_in - 2D array, the array on which the mean filter is to be applied
+    - kernel_width - int, the size of the kernel
+    Outputs:
+    - array of same shape as array_in, containing the result of the convolution
+    - array of same shape as array_in, containing the count of valid pixels averaged
+    """
+    # Copy of array_in where nan are replaced by 0
+    array_zero = array_in.copy()
+    array_zero[np.isnan(array_in)] = 0
+
+    # Convolution with square kernel
+    kernel = np.ones((kernel_width, kernel_width), dtype="f")
+    array_conv = fftconvolve(array_zero, kernel, mode="same")
+
+    # Array containing 0 where array_in is NaN, 1 otherwise
+    array_mask = 0 * array_in.copy() + 1
+    array_mask[np.isnan(array_in)] = 0
+
+    # Convolution -> count of valid pixels in the kernel
+    array_count = fftconvolve(array_mask, kernel, mode="same")
+
+    # Final convolution result with NaN accounted for
+    array_out = array_conv / array_count
+
+    return array_out, array_count
+
 
 # -- parameters -- #
 outdir = os.path.join("output", "thickness_kriging")
@@ -66,6 +100,15 @@ dem = dem.reproject(velocity, resampling="average")
 # Calculate slope
 slope = xdem.terrain.slope(dem)
 
+# Mask pixels outside glaciers and smooth
+sm_length = 400
+gl_mask = arg_outline.create_mask(slope)
+slope_arg = np.where(gl_mask.data & ~slope.data.mask, slope.data.data, np.nan)
+slope_sm, count = mean_filter_nan(slope_arg, int(sm_length / slope.res[0]))
+slope_sm[~gl_mask.data] = np.nan
+slope_sm[count <= 1] = np.nan
+slope_sm = slope.copy(new_array=slope_sm)
+
 # Plot input data
 fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(18, 6))
 
@@ -77,7 +120,7 @@ cb.set_label("Thickness (m)")
 velocity.show(ax=axes[1], cbar_title="Velocity (m/yr)", vmax=150)
 arg_outline.show(fc="none", ec="k", ax=axes[1])
 
-slope.show(ax=axes[2], cbar_title="Slope (degree)", vmax=60)
+slope_sm.show(ax=axes[2], cbar_title="Slope (degree)", vmax=60)
 arg_outline.show(fc="none", ec="k", ax=axes[2])
 
 plt.tight_layout()
@@ -86,8 +129,8 @@ plt.show()
 # --- Prepare data --- #
 
 # Extract slope at location of thickness obs
-slope_obs = slope.value_at_coords(zbed_x, zbed_y)
-slope_obs[slope_obs == slope.nodata] = np.nan  # Needed for now as DEM contains nodata values
+slope_obs = slope_sm.value_at_coords(zbed_x, zbed_y)
+slope_obs[slope_obs == slope_sm.nodata] = np.nan  # Needed for now as DEM contains nodata values
 
 # Extract velocity at location of thickness obs
 vel_obs = velocity.value_at_coords(zbed_x, zbed_y)
@@ -174,7 +217,7 @@ plt.show()
 res = H_obs - H_modeled_obs
 
 # Generate full map of modeled H
-H_modeled = H_model((slope.data, velocity.data))
+H_modeled = H_model((slope_sm.data, velocity.data))
 H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
 
 # Plot map along with map of residuals
