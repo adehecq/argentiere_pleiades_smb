@@ -70,14 +70,16 @@ outdir = os.path.join("output", "thickness_kriging")
 arg_outline = gu.Vector("data/gis/outline_pleiades_2020-09-08.shp")
 
 # Load thickness obs
-zbed_ds = gpd.read_file("data/ice_thx/orig/zbed_arg_measured_UTM32N.shp")
+zbed_ds = gpd.read_file("data/ice_thx/processed/zbed_arg_measured_UTM32N_shifted.shp")
 zsurf = zbed_ds.PixelValue
 zbed = zbed_ds.Field_3
 zbed_x = zbed_ds.geometry.x
 zbed_y = zbed_ds.geometry.y
+Transect = zbed_ds.Transect.astype(float)
+
+# remove some observations 
 
 # Calculate thickness and remove bad values
-# TODO: use fictive DEM to calculate thickness at unique date?
 zsurf = zsurf.replace(0, np.nan)
 H_obs = zsurf - zbed
 H_obs[H_obs < 0] = np.nan
@@ -88,10 +90,10 @@ zbed_x = zbed_x.values[valid_obs]
 zbed_y = zbed_y.values[valid_obs]
 
 # Load velocity data
-velocity = gu.Raster("data/velocity/PLEIADES_ALPS/stack_median_pleiades_2012-2022.tif")
+velocity = gu.Raster("output/velocity/v_mean_after_30_15°.tif")
 
-# Load Pleiades DEMs
-dem = gu.Raster("data/dh/DEMs/20200809_DEM_4m_shift_H-V_clip.tif")
+# Load Pleiades fictive DEM
+dem = gu.Raster("output/dh_results/meanDEM-2017_02_15.tif")
 
 # Crop DEM and velocity to Argentiere extent, reproject on same grid as velocity
 left, bottom, right, top = list(arg_outline.bounds)
@@ -135,10 +137,12 @@ plt.show()
 
 # Extract slope at location of thickness obs
 slope_obs = slope_tan.value_at_coords(zbed_x, zbed_y)
-slope_obs[slope_obs == slope_tan.nodata] = np.nan  # Needed for now as DEM contains nodata values
+slope_obs[slope_obs < 0] = np.nan  # remove values outside glacier outlines
+plt.hist(slope_obs)
 
 # Extract velocity at location of thickness obs
 vel_obs = velocity.value_at_coords(zbed_x, zbed_y)
+plt.hist(vel_obs)
 
 # --- Model H as a function of slope and velocity --- #
 
@@ -185,7 +189,7 @@ xdem.spatialstats.plot_1d_binning(
 plt.tight_layout()
 plt.show()
 
-# Plot 2D relationship -> Lots of data gaps
+# Plot 2D relationship -> some data gaps
 xdem.spatialstats.plot_2d_binning(
     df,
     var_name_1="slope",
@@ -264,10 +268,6 @@ H_modeled = np.nan * np.zeros_like(slope_tan.data)
 H_modeled[valid_x] = H_modeled_tmp
 H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
 
-# - Calculate modeled H - #
-# Calculate modeled H at location of observations
-# H_modeled_obs = H_model((slope_obs, vel_obs))
-
 # Calculate Pearson correlation coeff
 r = np.corrcoef(H_obs[np.isfinite(H_modeled_obs)], H_modeled_obs[np.isfinite(H_modeled_obs)])[0, 1]
 
@@ -283,10 +283,6 @@ plt.show()
 
 # Calculate model residuals
 res = H_obs - H_modeled_obs
-
-# # Generate full map of modeled H
-# H_modeled = H_model((slope_tan.data, velocity.data))
-# H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
 
 # Plot map along with map of residuals
 fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(18, 6))
@@ -376,7 +372,7 @@ print(f"Starting kriging at {time.strftime('%H:%M:%S', time.localtime())}")
 t0 = time.time()
 
 # downsampling factor
-dw = 2
+dw = 1
 
 # with structured mesh, on the whole scene -> slower
 # x_coords = grid_x[0, :]

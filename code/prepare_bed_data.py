@@ -54,7 +54,7 @@ bed_rst_utm.save("data/ice_thx/processed/dem_bed_adrien_utm32.tif")
 
 # - Calculate thickness - #
 # Calculate thickness for fictive date
-dem_med_date = xdem.DEM("output/dem_2017-02-15/dem_2017-02-15_interp_filtered.tif")
+dem_med_date = xdem.DEM("output/dh_results/meanDEM-2017_02_15.tif")
 thick = dem_med_date.reproject(bed_rst_vref) - bed_rst_vref
 
 # Mask few pixels with negative values and re-interpolate between valid pixels and edges set at 0
@@ -102,8 +102,12 @@ ellipsoid_ccrs = xdem.vcrs._build_ccrs_from_crs_and_vcrs(bed_obs_ds.crs, ellipso
 # Apply vertical transformation
 bed_obs_z_shifted = xdem.vcrs._transform_zz(raf09_ccrs, ellipsoid_ccrs, bed_obs_z, bed_obs_y, bed_obs_z)
 
+# Extract fictive DEM surface height at location of observations
+zsurf_shifted = dem_med_date.value_at_coords(bed_obs_x, bed_obs_y)
+
 # Update pandas' dataset and save
 bed_obs_ds_shifted = bed_obs_ds.copy()
 bed_obs_ds_shifted.Field_3 = bed_obs_z_shifted
+bed_obs_ds_shifted.PixelValue = zsurf_shifted
 print("Saving file data/ice_thx/processed/zbed_arg_measured_UTM32N_shifted.shp")
 bed_obs_ds_shifted.to_file("data/ice_thx/processed/zbed_arg_measured_UTM32N_shifted.shp")

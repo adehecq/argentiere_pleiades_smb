@@ -15,9 +15,13 @@ import gstools as gs
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas
+import pandas as pd
+import xdem
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.interpolate import griddata
+from scipy.signal import fftconvolve
+from sklearn import linear_model
+from tqdm import tqdm
 
 
 def run_srf(ref_raster, vg_model, conditions, downsampling, n_simu, mask=None):
@@ -48,29 +52,77 @@ def run_srf(ref_raster, vg_model, conditions, downsampling, n_simu, mask=None):
 
     # seeded ensemble generation
     seed = gs.random.MasterRNG(20170519)
-    for i in range(n_simu):
+    for i in tqdm(range(n_simu)):
+        #print(float(i)/n_simu)
         cond_srf(seed=seed(), store=[f"fld{i}", False, False])
 
     return cond_srf
 
+def mean_filter_nan(array_in, kernel_width):
+    """
+    Apply a mean filter to an array array_in, on a square kernel of size kernel_width.
+    The method account for NaN values in array_in and return the count of valid pixels used in the convolution.
+    Inputs:
+    - array_in - 2D array, the array on which the mean filter is to be applied
+    - kernel_width - int, the size of the kernel
+    Outputs:
+    - array of same shape as array_in, containing the result of the convolution
+    - array of same shape as array_in, containing the count of valid pixels averaged
+    """
+    # Copy of array_in where nan are replaced by 0
+    array_zero = array_in.copy()
+    array_zero[np.isnan(array_in)] = 0
+
+    # Convolution with square kernel
+    kernel = np.ones((kernel_width, kernel_width), dtype="f")
+    array_conv = fftconvolve(array_zero, kernel, mode="same")
+
+    # Array containing 0 where array_in is NaN, 1 otherwise
+    array_mask = 0 * array_in.copy() + 1
+    array_mask[np.isnan(array_in)] = 0
+
+    # Convolution -> count of valid pixels in the kernel
+    array_count = fftconvolve(array_mask, kernel, mode="same")
+
+    # Final convolution result with NaN accounted for
+    array_out = array_conv / array_count
+
+    return array_out, array_count
 
 # ----- Main ----- #
 
 # - A list of arguments that can be changed -
 
 # Whether or not to apply a log transformation to the residuals
-use_log = True
+use_log = False
+
+# Which bed to use (only one can be true)
+bed_polfit = True 
+bed_elmer = False
+bed_IGM = False
 
 # output directory
 if use_log:
-    outdir = os.path.join("output", "simulated_beds_log")
+    if bed_polfit:
+        outdir = os.path.join("output", "simulated_beds_polfit_log")
+    if bed_elmer:
+        outdir = os.path.join("output", "simulated_beds_elmer_log")
+    if bed_IGM:
+        outdir = os.path.join("output", "simulated_beds_igm_log")
 else:
-    outdir = os.path.join("output", "simulated_beds")
+    if bed_polfit:
+        outdir = os.path.join("output", "simulated_beds_polfit")
+    if bed_elmer:
+        outdir = os.path.join("output", "simulated_beds_elmer")
+    if bed_IGM:
+        outdir = os.path.join("output", "simulated_beds_igm")
+        
+os.makedirs(outdir, exist_ok=True)
 
 # Resolution and number of simulations
 # Running at 1/2 resolution for 100 simulation takes ~5h on 16 cores
-downsampling = 20
-n_simu = 4
+downsampling = 10
+n_simu = 2
 
 # --- Load input data --- #
 
@@ -84,12 +136,12 @@ zbed_x = zbed_ds.geometry.x
 zbed_y = zbed_ds.geometry.y
 
 # load data from fictive DEM to be coherent with methodology
-mnt_fict = gu.Raster(r"output/dem_2017-02-15/dem_2017-02-15_interp_filtered.tif")
+mnt_fict = gu.Raster("output/dh_results/meanDEM-2017_02_15.tif")
 zsurf = mnt_fict.value_at_coords(zbed_x, zbed_y)
 
 # Calculate thickness and remove bad values
 zsurf[zsurf == 0] = np.nan
-zsurf = pandas.Series(zsurf.flatten())
+zsurf = pd.Series(zsurf.flatten())
 H_obs = zsurf - zbed
 H_obs[H_obs < 0] = np.nan
 
@@ -99,10 +151,102 @@ zbed_x = zbed_x.values[valid_obs]
 zbed_y = zbed_y.values[valid_obs]
 zbed = zbed.values[valid_obs]
 
-# Load modeled bed and crop to glacier extent with 200 m buffer
-H_model = gu.Raster(r"data/ice_thx/processed/thickness_adrien_2017-02-15_utm32.tif")
+# Load or calculate modeled thickness and crop to glacier extent with 200 m buffer
+if bed_elmer:
+    H_model = gu.Raster(r"data/ice_thx/processed/thickness_adrien_2017-02-15_utm32.tif")
+if bed_polfit:
+    # Load velocity data
+    velocity = gu.Raster("output/velocity/v_mean_after_30_15°.tif")
+    
+    # Crop DEM and velocity to Argentiere extent, reproject on same grid as velocity
+    left, bottom, right, top = list(arg_outline.bounds)
+    velocity.crop([left - 200, bottom - 200, right + 200, top + 200])
+    dem = mnt_fict.reproject(velocity, resampling="average")
+    
+    # Calculate slope
+    slope = xdem.terrain.slope(dem)
+    
+    # Mask pixels outside glaciers and smooth
+    sm_length = 400
+    gl_mask = arg_outline.create_mask(slope)
+    slope_arg = np.where(gl_mask.data & ~slope.data.mask, slope.data.data, np.nan)
+    slope_sm, count = mean_filter_nan(slope_arg, int(sm_length / slope.res[0]))
+    slope_sm[~gl_mask.data] = np.nan
+    slope_sm[count <= 1] = np.nan
+    slope_sm = slope.copy(new_array=slope_sm)
+
+    # Calculate tangent of slope, for the V vs tau relationship
+    slope_tan = np.tan(slope_sm * np.pi / 180.)
+
+    # Plot input data
+    fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(18, 6))
+
+    arg_outline.show(fc="none", ec="k")
+    sc = axes[0].scatter(zbed_x, zbed_y, c=H_obs)
+    cb = plt.colorbar(sc)
+    cb.set_label("Thickness (m)")
+
+    velocity.show(ax=axes[1], cbar_title="Velocity (m/yr)", vmax=150)
+    arg_outline.show(fc="none", ec="k", ax=axes[1])
+
+    slope_sm.show(ax=axes[2], cbar_title="Slope (degree)")
+    arg_outline.show(fc="none", ec="k", ax=axes[2])
+
+    plt.tight_layout()
+    plt.show()
+
+    # --- Prepare data --- #
+
+    # Extract slope at location of thickness obs
+    slope_obs = slope_tan.value_at_coords(zbed_x, zbed_y)
+    slope_obs[slope_obs < 0] = np.nan  # remove values outside glacier outlines
+    plt.hist(slope_obs)
+
+    # Extract velocity at location of thickness obs
+    vel_obs = velocity.value_at_coords(zbed_x, zbed_y)
+    plt.hist(vel_obs)
+
+    # --- Model H as a function of slope and velocity --- #
+
+    # Calculate mean H as a function of slope and velocity
+    slope_bins = np.percentile(slope_obs[np.isfinite(slope_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+    velocity_bins = np.percentile(vel_obs[np.isfinite(vel_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+
+    df = xdem.spatialstats.nd_binning(
+        values=H_obs,
+        list_var=[slope_obs, vel_obs],
+        list_var_names=["slope", "velocity"],
+        statistics=["count", "mean", "median"],
+        list_var_bins=[slope_bins, velocity_bins],
+    )
+    
+    # Multivariate regression
+    df_sub = df[np.logical_and(df.nd == 2, np.isfinite(pd.IntervalIndex(df["slope"]).mid), np.isfinite(pd.IntervalIndex(df["velocity"]).mid))].copy()
+    xx1 = np.log10(pd.IntervalIndex(df_sub["slope"][df_sub["count"].values > 5]).mid)
+    xx2 = np.log10(pd.IntervalIndex(df_sub["velocity"][df_sub["count"].values > 5]).mid)
+    yy = np.log10(df_sub["median"][df_sub["count"].values > 5])
+
+    lin_reg = linear_model.LinearRegression()
+    lin_reg.fit(np.transpose([xx1, xx2]), yy)
+
+    # Predicition at obs
+    valid_obs = np.where(np.isfinite(slope_obs) & np.isfinite(vel_obs))
+    H_modeled_obs = np.nan * np.zeros_like(H_obs)
+    H_modeled_obs[valid_obs] = 10**lin_reg.predict(np.transpose((np.log10(slope_obs[valid_obs]), np.log10(vel_obs[valid_obs]))))
+
+    # Generate full map of modeled H
+    x1 = np.log10(slope_tan.data)
+    x2 = np.log10(velocity.data)
+    valid_x = np.where(np.isfinite(x1) & np.isfinite(x2))
+    H_modeled_tmp = 10**lin_reg.predict(np.transpose((x1[valid_x], x2[valid_x])))
+    H_model = np.nan * np.zeros_like(slope_tan.data)
+    H_model[valid_x] = H_modeled_tmp
+    H_model = gu.Raster.from_array(H_model, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
+
+    
 left, bottom, right, top = list(arg_outline.bounds)
 H_model.crop([left - 200, bottom - 200, right + 200, top + 200])
+H_model.show()
 # H_model.crop(arg_outline)
 
 # --- Prepare data --- #
@@ -225,11 +369,12 @@ final_mask = mask2 & ~mask1
 
 # Add "fake" observations at 0 on glacier edges
 idx_contour = np.where(final_mask.data)
-res_contour = np.ones(np.size(idx_contour, 1)) * 0.001
+res_contour = np.ones(np.size(idx_contour, 1)) * 0.0001
 res = np.concatenate((res, res_contour))
 res_log = np.concatenate((res_log, np.log(res_contour)))
-zbed_x = np.concatenate((zbed_x, idx_contour[0]))
-zbed_y = np.concatenate((zbed_y, idx_contour[1]))
+grid_x, grid_y = H_model.coords()
+zbed_x = np.concatenate((zbed_x, grid_x[idx_contour]))
+zbed_y = np.concatenate((zbed_y, grid_y[idx_contour]))
 
 # -- Run simulations --
 
