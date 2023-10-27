@@ -121,8 +121,8 @@ os.makedirs(outdir, exist_ok=True)
 
 # Resolution and number of simulations
 # Running at 1/2 resolution for 100 simulation takes ~5h on 16 cores
-downsampling = 10
-n_simu = 2
+downsampling = 2
+n_simu = 8
 
 # --- Load input data --- #
 
