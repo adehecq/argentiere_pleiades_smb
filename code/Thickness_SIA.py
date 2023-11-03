@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 import xdem
 from scipy.signal import fftconvolve
+from scipy.optimize import least_squares
 from sklearn import linear_model
 
 
@@ -58,6 +59,30 @@ def mean_filter_nan(array_in, kernel_width):
     array_out = array_conv / array_count
 
     return array_out, array_count
+
+
+def sia_thickness(tan_slope: np.ndarray, velocity: np.ndarray, A: float, beta: float):
+    """
+    Calculate the thickness following the SIA approximation used in Millan et al. (2022), Eq 3.
+
+    :param tan_slope: The tangent of the surface slope
+    :param velocity: Surface velocity in m/yr
+    :param: The value of the creep parameter
+    :param beta: The ratio between basal and surface velocity
+    """
+    # Convert velocity from m/yr to m/s
+    vel_ms = velocity / (365.25 * 24 * 3600)
+
+    # Multiplying factor
+    n = 3
+    rho = 917
+    g = 9.81
+    factor = (1-beta) * (n+1) / (2 * A * (rho * g)**n)
+
+    # Calculate thickness
+    H = (factor * vel_ms)**(1/(n+1)) * tan_slope**(-n/(n + 1))
+
+    return H
 
 
 # -- parameters -- #
@@ -153,60 +178,74 @@ plt.show()
 # --- Model H as a function of slope and velocity --- #
 
 # First guess (Millan et al., 2022; Eq 3) & compare with actual observations
-n = 3
-beta = 0.2 
-A = 2*10**(-25)
-rho = 917
-g = 9.81
+beta = 0.2
+A = 2e-25
 
 valid_obs = np.where(np.isfinite(slope_obs) & np.isfinite(vel_obs))
 H_modeled_obs = np.nan * np.zeros_like(H_obs)
-H_modeled_obs[valid_obs] = (((1-beta)*(n+1)/(2*A*(rho*g)**n))**(1/(n+1)))*(slope_obs[valid_obs]**(-n/(n+1)))*((vel_obs[valid_obs]/(365*24*3600))**(1/(n+1)))
-
+H_modeled_obs[valid_obs] = sia_thickness(slope_obs[valid_obs], vel_obs[valid_obs], A, beta)
 r = np.corrcoef(H_obs[valid_obs], H_modeled_obs[valid_obs])[0, 1]
 
-plt.plot(H_obs[valid_obs], H_modeled_obs[valid_obs], ls="", marker="+", c="C0")
+H_modeled = sia_thickness(slope_tan.data, velocity.data, A, beta)
+
+fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(18, 6))
+
+arg_outline.show(fc="none", ec="k")
+sc = axes[0].scatter(zbed_x, zbed_y, c=H_obs, vmin=0, vmax=500)
+cb = plt.colorbar(sc)
+cb.set_label("Observed thickness (m)")
+
+im = axes[1].imshow(H_modeled, vmin=0, vmax=500)
+cb = plt.colorbar(im)
+cb.set_label("Modeled thickness (m)")
+
+axes[2].plot(H_obs[valid_obs], H_modeled_obs[valid_obs], ls="", marker="+", c="C0")
 plt.xlabel("Observed thickness (m)")
 plt.ylabel("Modeled thickness (m)")
 plt.axline((0, 0), slope=1, color="k", ls="--")  # Plot 1:1 line
 plt.title(f"R2 = {r**2:.2f}")
+
+plt.tight_layout()
 plt.show()
 
+
 # calibrate A and beta
-A_cal = A
-beta_cal = beta
-RMSE = (sum((H_obs[valid_obs]-H_modeled_obs[valid_obs])**2)/sum((np.isfinite(slope_obs) & np.isfinite(vel_obs))))**(1/2)
-for aa in range(1,50):
-    for bb in range(1,30):
-        print(aa)
-        beta = bb*10**(-2)
-        A = aa*10**(-25)
-        H_model = (((1-beta)*(n+1)/(2*A*(rho*g)**n))**(1/(n+1)))*(slope_obs[valid_obs]**(-n/(n+1)))*((vel_obs[valid_obs]/(365*24*3600))**(1/(n+1)))
-        RMSE_tmp = (sum((H_obs[valid_obs]-H_model)**2)/sum((np.isfinite(slope_obs) & np.isfinite(vel_obs))))**(1/2)
-        if RMSE_tmp<RMSE:
-            A_cal = A
-            beta_cal = beta
-            RMSE = RMSE_tmp
+print("Calculate optimal A and beta for model")
+
+# Attempt using scipy.optimize
+# Need to scale A because the very low value causes the optimization to fail for some reason
+A_base = 1e-25
+def err(params, inputs, H_obs):
+    """
+    params are (A, beta)
+    inputs are (slope, velocity)
+    The order is imposed by the least_square function.
+    """
+    res = sia_thickness(inputs[0], inputs[1], params[0] * A_base, params[1]) - H_obs
+    return res
+
+res = least_squares(err, [A / A_base, beta], args=((slope_obs[valid_obs], vel_obs[valid_obs]), H_obs[valid_obs]), verbose=1)
+A_cal = res.x[0] * A_base
+beta_cal = res.x[1]
+
         
-H_modeled_obs[valid_obs] = (((1-beta_cal)*(n+1)/(2*A_cal*(rho*g)**n))**(1/(n+1)))*(slope_obs[valid_obs]**(-n/(n+1)))*((vel_obs[valid_obs]/(365*24*3600))**(1/(n+1)))
+H_modeled_obs[valid_obs] = sia_thickness(slope_obs[valid_obs], vel_obs[valid_obs], A_cal, beta_cal)
 
 r = np.corrcoef(H_obs[valid_obs], H_modeled_obs[valid_obs])[0, 1]
 RMSE = (sum((H_obs[valid_obs]-H_modeled_obs[valid_obs])**2)/sum((np.isfinite(slope_obs) & np.isfinite(vel_obs))))**(1/2)
+
+print(f"Found optimal parameters A = {A_cal:g}, beta = {beta_cal:.3f}")
+print(f"RMSE = {RMSE:.2f}")
 
 plt.plot(H_obs[valid_obs], H_modeled_obs[valid_obs], ls="", marker="+", c="C0")
 plt.xlabel("Observed thickness (m)")
 plt.ylabel("Modeled thickness (m)")
 plt.axline((0, 0), slope=1, color="k", ls="--")  # Plot 1:1 line
-plt.title(f"R2 = {r**2:.2f}")
+plt.title(f"R2 = {r**2:.2f} - RMSE = {RMSE:.1f}")
 plt.show()
 
 # Generate full map of modeled H
-x1 = slope_tan.data
-x2 = velocity.data/(365*24*3600)
-valid_x = np.where(np.isfinite(x1) & np.isfinite(x2))
-H_modeled_tmp = (((1-beta_cal)*(n+1)/(2*A_cal*(rho*g)**n))**(1/(n+1)))*(x1[valid_x]**(-n/(n+1)))*((x2[valid_x])**(1/(n+1)))
-H_modeled = np.nan * np.zeros_like(slope_tan.data)
-H_modeled[valid_x] = H_modeled_tmp
+H_modeled = sia_thickness(slope_tan.data, velocity.data, A_cal, beta_cal)
 H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
 
 # Calculate model residuals
