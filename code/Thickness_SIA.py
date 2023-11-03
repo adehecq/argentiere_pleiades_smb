@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 import xdem
 from scipy.signal import fftconvolve
+from scipy.optimize import least_squares
 from sklearn import linear_model
 
 
@@ -60,8 +61,32 @@ def mean_filter_nan(array_in, kernel_width):
     return array_out, array_count
 
 
+def sia_thickness(tan_slope: np.ndarray, velocity: np.ndarray, A: float, beta: float):
+    """
+    Calculate the thickness following the SIA approximation used in Millan et al. (2022), Eq 3.
+
+    :param tan_slope: The tangent of the surface slope
+    :param velocity: Surface velocity in m/yr
+    :param: The value of the creep parameter
+    :param beta: The ratio between basal and surface velocity
+    """
+    # Convert velocity from m/yr to m/s
+    vel_ms = velocity / (365.25 * 24 * 3600)
+
+    # Multiplying factor
+    n = 3
+    rho = 917
+    g = 9.81
+    factor = (1-beta) * (n+1) / (2 * A * (rho * g)**n)
+
+    # Calculate thickness
+    H = (factor * vel_ms)**(1/(n+1)) * tan_slope**(-n/(n + 1))
+
+    return H
+
+
 # -- parameters -- #
-outdir = os.path.join("output", "thickness_kriging")
+outdir = os.path.join("output", "thickness_SIA")
 
 
 # --- Load input data --- #
@@ -139,147 +164,90 @@ plt.show()
 slope_obs = slope_tan.value_at_coords(zbed_x, zbed_y)
 slope_obs[slope_obs < 0] = np.nan  # remove values outside glacier outlines
 plt.hist(slope_obs)
+plt.xlabel("tan(slope)")
+plt.title("Slope histogram")
+plt.show()
 
 # Extract velocity at location of thickness obs
 vel_obs = velocity.value_at_coords(zbed_x, zbed_y)
 plt.hist(vel_obs)
+plt.xlabel("Velocity (m/yr)")
+plt.title("Velocity histogram")
+plt.show()
 
 # --- Model H as a function of slope and velocity --- #
 
-# Calculate mean H as a function of slope and velocity
-# slope_bins = np.tan(np.array([0, 2, 4, 6, 8, 10, 20, 40, np.max(slope)]) * np.pi / 180)
-# velocity_bins = [0, 10, 20, 30, 40, 50, np.max(vel_obs)]
-slope_bins = np.percentile(slope_obs[np.isfinite(slope_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
-velocity_bins = np.percentile(vel_obs[np.isfinite(vel_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+# First guess (Millan et al., 2022; Eq 3) & compare with actual observations
+beta = 0.2
+A = 24e-25
 
-df = xdem.spatialstats.nd_binning(
-    values=H_obs,
-    list_var=[slope_obs, vel_obs],
-    list_var_names=["slope", "velocity"],
-    statistics=["count", "mean", "median"],
-    list_var_bins=[slope_bins, velocity_bins],
-)
-
-# Minimum number of samples in each bin to be considered valid
-min_count = 3
-
-# Plot relationship against each variable
-fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(12, 6))
-
-xdem.spatialstats.plot_1d_binning(
-    df,
-    var_name="slope",
-    statistic_name="mean",
-    label_var="Slope tangent",
-    label_statistic="Mean thickness (m)",
-    ax=axes[0],
-    min_count=min_count,
-)
-
-xdem.spatialstats.plot_1d_binning(
-    df,
-    var_name="velocity",
-    statistic_name="mean",
-    label_var="Velocity (m/yr)",
-    label_statistic="Mean thickness (m)",
-    ax=axes[1],
-    min_count=min_count,
-)
-
-plt.tight_layout()
-plt.show()
-
-# Plot 2D relationship -> some data gaps
-xdem.spatialstats.plot_2d_binning(
-    df,
-    var_name_1="slope",
-    var_name_2="velocity",
-    statistic_name="mean",
-    label_var_name_1="Slope tangent",
-    label_var_name_2="Velocity (m/yr)",
-    label_statistic="Mean thickness (m)",
-    min_count=min_count,
-)
-plt.tight_layout()
-plt.show()
-
-# Option 1 - Interpolate model for H
-# H_model = xdem.spatialstats.interp_nd_binning(
-#     df, list_var_names=["slope", "velocity"], statistic="mean", min_count=min_count
-# )
-
-# - Option 2 - Polynomial fit of relationship - #
-
-# Test 1D, but not used
-# Vs slope
-df_sub = df[np.logical_and(df.nd == 1, np.isfinite(pd.IntervalIndex(df["slope"]).mid))].copy()
-xx1 = np.log10(pd.IntervalIndex(df_sub["slope"][df_sub["count"].values > 5]).mid)
-yy1 = np.log10(df_sub["median"][df_sub["count"].values > 5])
-poly_slope = np.polyfit(xx1, yy1, deg=1)
-
-# Vs velocity
-df_sub = df[np.logical_and(df.nd == 1, np.isfinite(pd.IntervalIndex(df["velocity"]).mid))].copy()
-xx2 = np.log10(pd.IntervalIndex(df_sub["velocity"][df_sub["count"].values > 5]).mid)
-yy2 = np.log10(df_sub["median"][df_sub["count"].values > 5])
-poly_vel = np.polyfit(xx2, yy2, deg=1)
-
-plt.figure(figsize=(12, 6))
-
-plt.subplot(121)
-x_reg = [np.min(xx1), np.max(xx1)]
-y_reg = np.polyval(poly_slope, x_reg)
-
-plt.plot(xx1, yy1, "r+")
-plt.plot(x_reg, y_reg, "k-")
-plt.xlabel("Log(tan(slope))")
-plt.ylabel("Log(thickness)")
-
-plt.subplot(122)
-x_reg = [np.min(xx2), np.max(xx2)]
-y_reg = np.polyval(poly_vel, x_reg)
-
-plt.plot(xx2, yy2, "r+")
-plt.plot(x_reg, y_reg, "k-")
-plt.xlabel("Log(velocity)")
-plt.ylabel("Log(thickness)")
-
-plt.show()
-
-# Multivariate regression
-df_sub = df[np.logical_and(df.nd == 2, np.isfinite(pd.IntervalIndex(df["slope"]).mid), np.isfinite(pd.IntervalIndex(df["velocity"]).mid))].copy()
-xx1 = np.log10(pd.IntervalIndex(df_sub["slope"][df_sub["count"].values > 5]).mid)
-xx2 = np.log10(pd.IntervalIndex(df_sub["velocity"][df_sub["count"].values > 5]).mid)
-yy = np.log10(df_sub["median"][df_sub["count"].values > 5])
-
-lin_reg = linear_model.LinearRegression()
-lin_reg.fit(np.transpose([xx1, xx2]), yy)
-
-# Predicition at obs
 valid_obs = np.where(np.isfinite(slope_obs) & np.isfinite(vel_obs))
 H_modeled_obs = np.nan * np.zeros_like(H_obs)
-H_modeled_obs[valid_obs] = 10**lin_reg.predict(np.transpose((np.log10(slope_obs[valid_obs]), np.log10(vel_obs[valid_obs]))))
+H_modeled_obs[valid_obs] = sia_thickness(slope_obs[valid_obs], vel_obs[valid_obs], A, beta)
+r = np.corrcoef(H_obs[valid_obs], H_modeled_obs[valid_obs])[0, 1]
 
-# Generate full map of modeled H
-x1 = np.log10(slope_tan.data)
-x2 = np.log10(velocity.data)
-valid_x = np.where(np.isfinite(x1) & np.isfinite(x2))
-H_modeled_tmp = 10**lin_reg.predict(np.transpose((x1[valid_x], x2[valid_x])))
-H_modeled = np.nan * np.zeros_like(slope_tan.data)
-H_modeled[valid_x] = H_modeled_tmp
-H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
+H_modeled = sia_thickness(slope_tan.data, velocity.data, A, beta)
 
-# Calculate Pearson correlation coeff
-r = np.corrcoef(H_obs[np.isfinite(H_modeled_obs)], H_modeled_obs[np.isfinite(H_modeled_obs)])[0, 1]
+fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(18, 6))
 
-# - Plot -
+arg_outline.show(fc="none", ec="k")
+sc = axes[0].scatter(zbed_x, zbed_y, c=H_obs, vmin=0, vmax=500)
+cb = plt.colorbar(sc)
+cb.set_label("Observed thickness (m)")
 
-# Plot one vs the other
-plt.plot(H_obs, H_modeled_obs, ls="", marker="+", c="C0")
+im = axes[1].imshow(H_modeled, vmin=0, vmax=500)
+cb = plt.colorbar(im)
+cb.set_label("Modeled thickness (m)")
+
+axes[2].plot(H_obs[valid_obs], H_modeled_obs[valid_obs], ls="", marker="+", c="C0")
 plt.xlabel("Observed thickness (m)")
 plt.ylabel("Modeled thickness (m)")
 plt.axline((0, 0), slope=1, color="k", ls="--")  # Plot 1:1 line
 plt.title(f"R2 = {r**2:.2f}")
+
+plt.tight_layout()
 plt.show()
+
+
+# calibrate A and beta
+print("Calculate optimal A and beta for model")
+
+# Attempt using scipy.optimize
+# Need to scale A because the very low value causes the optimization to fail for some reason
+A_base = 1e-25
+def err(params, inputs, H_obs):
+    """
+    params are (A, beta)
+    inputs are (slope, velocity)
+    The order is imposed by the least_square function.
+    """
+    res = sia_thickness(inputs[0], inputs[1], params[0] * A_base, params[1]) - H_obs
+    return res
+
+res = least_squares(err, [A / A_base, beta], args=((slope_obs[valid_obs], vel_obs[valid_obs]), H_obs[valid_obs]), verbose=1, bounds=((1, 0), (100, 1))
+
+A_cal = res.x[0] * A_base
+beta_cal = res.x[1]
+
+        
+H_modeled_obs[valid_obs] = sia_thickness(slope_obs[valid_obs], vel_obs[valid_obs], A_cal, beta_cal)
+
+r = np.corrcoef(H_obs[valid_obs], H_modeled_obs[valid_obs])[0, 1]
+RMSE = (sum((H_obs[valid_obs]-H_modeled_obs[valid_obs])**2)/sum((np.isfinite(slope_obs) & np.isfinite(vel_obs))))**(1/2)
+
+print(f"Found optimal parameters A = {A_cal:g}, beta = {beta_cal:.3f}")
+print(f"RMSE = {RMSE:.2f}")
+
+plt.plot(H_obs[valid_obs], H_modeled_obs[valid_obs], ls="", marker="+", c="C0")
+plt.xlabel("Observed thickness (m)")
+plt.ylabel("Modeled thickness (m)")
+plt.axline((0, 0), slope=1, color="k", ls="--")  # Plot 1:1 line
+plt.title(f"R2 = {r**2:.2f} - RMSE = {RMSE:.1f}")
+plt.show()
+
+# Generate full map of modeled H
+H_modeled = sia_thickness(slope_tan.data, velocity.data, A_cal, beta_cal)
+H_modeled = gu.Raster.from_array(H_modeled, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
 
 # Calculate model residuals
 res = H_obs - H_modeled_obs
@@ -443,5 +411,6 @@ plt.show()
 
 # Save
 os.makedirs(outdir, exist_ok=True)
-H_final.save(os.path.join(outdir, "Argentiere_thickness_from_kriging.tif"))
-err_final.save(os.path.join(outdir, "Argentiere_thickness_err_from_kriging.tif"))
+H_modeled.save(os.path.join(outdir, "Argentiere_thickness_SIA.tif"))
+H_final.save(os.path.join(outdir, "SIA_thickness_after_kriging.tif"))
+err_final.save(os.path.join(outdir, "SIA_thickness_err_from_kriging.tif"))
