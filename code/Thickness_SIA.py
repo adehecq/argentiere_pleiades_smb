@@ -179,7 +179,7 @@ plt.show()
 
 # First guess (Millan et al., 2022; Eq 3) & compare with actual observations
 beta = 0.2
-A = 2e-25
+A = 24e-25
 
 valid_obs = np.where(np.isfinite(slope_obs) & np.isfinite(vel_obs))
 H_modeled_obs = np.nan * np.zeros_like(H_obs)
@@ -224,7 +224,8 @@ def err(params, inputs, H_obs):
     res = sia_thickness(inputs[0], inputs[1], params[0] * A_base, params[1]) - H_obs
     return res
 
-res = least_squares(err, [A / A_base, beta], args=((slope_obs[valid_obs], vel_obs[valid_obs]), H_obs[valid_obs]), verbose=1)
+res = least_squares(err, [A / A_base, beta], args=((slope_obs[valid_obs], vel_obs[valid_obs]), H_obs[valid_obs]), verbose=1, bounds=((1, 0), (100, 1))
+
 A_cal = res.x[0] * A_base
 beta_cal = res.x[1]
 
