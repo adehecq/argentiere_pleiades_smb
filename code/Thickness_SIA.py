@@ -139,69 +139,18 @@ plt.show()
 slope_obs = slope_tan.value_at_coords(zbed_x, zbed_y)
 slope_obs[slope_obs < 0] = np.nan  # remove values outside glacier outlines
 plt.hist(slope_obs)
+plt.xlabel("tan(slope)")
+plt.title("Slope histogram")
+plt.show()
 
 # Extract velocity at location of thickness obs
 vel_obs = velocity.value_at_coords(zbed_x, zbed_y)
 plt.hist(vel_obs)
+plt.xlabel("Velocity (m/yr)")
+plt.title("Velocity histogram")
+plt.show()
 
 # --- Model H as a function of slope and velocity --- #
-
-# Calculate mean H as a function of slope and velocity
-# slope_bins = np.tan(np.array([0, 2, 4, 6, 8, 10, 20, 40, np.max(slope)]) * np.pi / 180)
-# velocity_bins = [0, 10, 20, 30, 40, 50, np.max(vel_obs)]
-slope_bins = np.percentile(slope_obs[np.isfinite(slope_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
-velocity_bins = np.percentile(vel_obs[np.isfinite(vel_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
-
-df = xdem.spatialstats.nd_binning(
-    values=H_obs,
-    list_var=[slope_obs, vel_obs],
-    list_var_names=["slope", "velocity"],
-    statistics=["count", "mean", "median"],
-    list_var_bins=[slope_bins, velocity_bins],
-)
-
-# Minimum number of samples in each bin to be considered valid
-min_count = 3
-
-# Plot relationship against each variable
-fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(12, 6))
-
-xdem.spatialstats.plot_1d_binning(
-    df,
-    var_name="slope",
-    statistic_name="mean",
-    label_var="Slope tangent",
-    label_statistic="Mean thickness (m)",
-    ax=axes[0],
-    min_count=min_count,
-)
-
-xdem.spatialstats.plot_1d_binning(
-    df,
-    var_name="velocity",
-    statistic_name="mean",
-    label_var="Velocity (m/yr)",
-    label_statistic="Mean thickness (m)",
-    ax=axes[1],
-    min_count=min_count,
-)
-
-plt.tight_layout()
-plt.show()
-
-# Plot 2D relationship -> some data gaps
-xdem.spatialstats.plot_2d_binning(
-    df,
-    var_name_1="slope",
-    var_name_2="velocity",
-    statistic_name="mean",
-    label_var_name_1="Slope tangent",
-    label_var_name_2="Velocity (m/yr)",
-    label_statistic="Mean thickness (m)",
-    min_count=min_count,
-)
-plt.tight_layout()
-plt.show()
 
 # First guess (Millan et al., 2022; Eq 3) & compare with actual observations
 n = 3
