@@ -4,8 +4,8 @@ Attempt to extrapolate the bed obsrvations to the whole glacier using ordinary k
 - bin the thickness obs by slope and velocity
 - use this empirical relationship to calculate a modeled thickness over the whole glacier
 - remove the model to the observations
-- fit a variogram model to teh residuals
-- run ordinary kriging to teh residuals
+- fit a variogram model to the residuals
+- run ordinary kriging to the residuals
  
 TODO:
 - smooth slope
@@ -101,8 +101,6 @@ zbed = zbed_ds.Field_3
 zbed_x = zbed_ds.geometry.x
 zbed_y = zbed_ds.geometry.y
 Transect = zbed_ds.Transect.astype(float)
-
-# remove some observations 
 
 # Calculate thickness and remove bad values
 zsurf = zsurf.replace(0, np.nan)
@@ -224,7 +222,7 @@ def err(params, inputs, H_obs):
     res = sia_thickness(inputs[0], inputs[1], params[0] * A_base, params[1]) - H_obs
     return res
 
-res = least_squares(err, [A / A_base, beta], args=((slope_obs[valid_obs], vel_obs[valid_obs]), H_obs[valid_obs]), verbose=1, bounds=((1, 0), (100, 1))
+res = least_squares(err, [A / A_base, beta], args=((slope_obs[valid_obs], vel_obs[valid_obs]), H_obs[valid_obs]), verbose=1, bounds=((1, 0), (100, 1)))
 
 A_cal = res.x[0] * A_base
 beta_cal = res.x[1]
