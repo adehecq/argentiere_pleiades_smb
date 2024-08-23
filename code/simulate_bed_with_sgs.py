@@ -97,32 +97,37 @@ def mean_filter_nan(array_in, kernel_width):
 use_log = False
 
 # Which bed to use (only one can be true)
-bed_polfit = True 
+bed_sia = True 
 bed_elmer = False
 bed_IGM = False
+bed_farinotti = False
 
 # output directory
 if use_log:
-    if bed_polfit:
-        outdir = os.path.join("output", "simulated_beds_polfit_log")
+    if bed_sia:
+        outdir = os.path.join("output", "thickness_SIA", "simulated_beds_log")
     if bed_elmer:
         outdir = os.path.join("output", "simulated_beds_elmer_log")
     if bed_IGM:
-        outdir = os.path.join("output", "simulated_beds_igm_log")
+        outdir = os.path.join("output", "thickness_IGM", "simulated_beds_log")
+    if bed_farinotti:
+        outdir = os.path.join("output", "thickness_Farinotti", "simulated_beds_log")
 else:
-    if bed_polfit:
-        outdir = os.path.join("output", "simulated_beds_polfit")
+    if bed_sia:
+        outdir = os.path.join("output", "thickness_SIA", "simulated_beds")
     if bed_elmer:
         outdir = os.path.join("output", "simulated_beds_elmer")
     if bed_IGM:
-        outdir = os.path.join("output", "simulated_beds_igm")
+        outdir = os.path.join("output", "thickness_IGM", "simulated_beds")
+    if bed_farinotti:
+        outdir = os.path.join("output", "thickness_Farinotti", "simulated_beds")
         
 os.makedirs(outdir, exist_ok=True)
 
 # Resolution and number of simulations
 # Running at 1/2 resolution for 100 simulation takes ~5h on 16 cores
-downsampling = 2
-n_simu = 8
+downsampling = 4
+n_simu = 100
 
 # --- Load input data --- #
 
@@ -154,94 +159,12 @@ zbed = zbed.values[valid_obs]
 # Load or calculate modeled thickness and crop to glacier extent with 200 m buffer
 if bed_elmer:
     H_model = gu.Raster(r"data/ice_thx/processed/thickness_adrien_2017-02-15_utm32.tif")
-if bed_polfit:
-    # Load velocity data
-    velocity = gu.Raster("output/velocity/v_mean_after_30_15°.tif")
-    
-    # Crop DEM and velocity to Argentiere extent, reproject on same grid as velocity
-    left, bottom, right, top = list(arg_outline.bounds)
-    velocity.crop([left - 200, bottom - 200, right + 200, top + 200])
-    dem = mnt_fict.reproject(velocity, resampling="average")
-    
-    # Calculate slope
-    slope = xdem.terrain.slope(dem)
-    
-    # Mask pixels outside glaciers and smooth
-    sm_length = 400
-    gl_mask = arg_outline.create_mask(slope)
-    slope_arg = np.where(gl_mask.data & ~slope.data.mask, slope.data.data, np.nan)
-    slope_sm, count = mean_filter_nan(slope_arg, int(sm_length / slope.res[0]))
-    slope_sm[~gl_mask.data] = np.nan
-    slope_sm[count <= 1] = np.nan
-    slope_sm = slope.copy(new_array=slope_sm)
-
-    # Calculate tangent of slope, for the V vs tau relationship
-    slope_tan = np.tan(slope_sm * np.pi / 180.)
-
-    # Plot input data
-    fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(18, 6))
-
-    arg_outline.show(fc="none", ec="k")
-    sc = axes[0].scatter(zbed_x, zbed_y, c=H_obs)
-    cb = plt.colorbar(sc)
-    cb.set_label("Thickness (m)")
-
-    velocity.show(ax=axes[1], cbar_title="Velocity (m/yr)", vmax=150)
-    arg_outline.show(fc="none", ec="k", ax=axes[1])
-
-    slope_sm.show(ax=axes[2], cbar_title="Slope (degree)")
-    arg_outline.show(fc="none", ec="k", ax=axes[2])
-
-    plt.tight_layout()
-    plt.show()
-
-    # --- Prepare data --- #
-
-    # Extract slope at location of thickness obs
-    slope_obs = slope_tan.value_at_coords(zbed_x, zbed_y)
-    slope_obs[slope_obs < 0] = np.nan  # remove values outside glacier outlines
-    plt.hist(slope_obs)
-
-    # Extract velocity at location of thickness obs
-    vel_obs = velocity.value_at_coords(zbed_x, zbed_y)
-    plt.hist(vel_obs)
-
-    # --- Model H as a function of slope and velocity --- #
-
-    # Calculate mean H as a function of slope and velocity
-    slope_bins = np.percentile(slope_obs[np.isfinite(slope_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
-    velocity_bins = np.percentile(vel_obs[np.isfinite(vel_obs)], [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
-
-    df = xdem.spatialstats.nd_binning(
-        values=H_obs,
-        list_var=[slope_obs, vel_obs],
-        list_var_names=["slope", "velocity"],
-        statistics=["count", "mean", "median"],
-        list_var_bins=[slope_bins, velocity_bins],
-    )
-    
-    # Multivariate regression
-    df_sub = df[np.logical_and(df.nd == 2, np.isfinite(pd.IntervalIndex(df["slope"]).mid), np.isfinite(pd.IntervalIndex(df["velocity"]).mid))].copy()
-    xx1 = np.log10(pd.IntervalIndex(df_sub["slope"][df_sub["count"].values > 5]).mid)
-    xx2 = np.log10(pd.IntervalIndex(df_sub["velocity"][df_sub["count"].values > 5]).mid)
-    yy = np.log10(df_sub["median"][df_sub["count"].values > 5])
-
-    lin_reg = linear_model.LinearRegression()
-    lin_reg.fit(np.transpose([xx1, xx2]), yy)
-
-    # Predicition at obs
-    valid_obs = np.where(np.isfinite(slope_obs) & np.isfinite(vel_obs))
-    H_modeled_obs = np.nan * np.zeros_like(H_obs)
-    H_modeled_obs[valid_obs] = 10**lin_reg.predict(np.transpose((np.log10(slope_obs[valid_obs]), np.log10(vel_obs[valid_obs]))))
-
-    # Generate full map of modeled H
-    x1 = np.log10(slope_tan.data)
-    x2 = np.log10(velocity.data)
-    valid_x = np.where(np.isfinite(x1) & np.isfinite(x2))
-    H_modeled_tmp = 10**lin_reg.predict(np.transpose((x1[valid_x], x2[valid_x])))
-    H_model = np.nan * np.zeros_like(slope_tan.data)
-    H_model[valid_x] = H_modeled_tmp
-    H_model = gu.Raster.from_array(H_model, transform=velocity.transform, crs=velocity.crs, nodata=-9999)
+if bed_sia:
+    H_model = gu.Raster(r"output/thickness_SIA/Argentiere_thickness_SIA.tif")
+if bed_IGM:
+    H_model = gu.Raster(r"C:/Users/kneibm/Documents/CAIRN/Accu_Argentiere/IGM/ThxInversionGJ/2023_10_24_MK/thkresult.tif")
+if bed_farinotti:
+    H_model = gu.Raster(r"data/ice_thx/orig/RGI60-11.03638_thickness_Faconsensus.tif")
 
     
 left, bottom, right, top = list(arg_outline.bounds)
@@ -422,7 +345,6 @@ for i in range(n_simu):
     H_simu[i][~mask1.data] = np.nan
 
 # Save to raster
-os.makedirs(outdir, exist_ok=True)
 print(f"Saving output files in {outdir}")
 for k in range(n_simu):
     raster = gu.Raster.from_array(H_simu[k], H_model.transform, H_model.crs, nodata=H_model.nodata)
