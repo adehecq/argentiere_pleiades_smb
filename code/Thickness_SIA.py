@@ -1,5 +1,5 @@
 """
-Attempt to extrapolate the bed obsrvations to the whole glacier using ordinary kriging with a deterministic thickness model, based on slope and velocity. The steps are the following:
+script to calculate the bed from surface velocity observations using the Shallow Ice Approximation (SIA) calibrated with GPR observations. The steps are the following:
 - load thickness observations, slope and velocity
 - bin the thickness obs by slope and velocity
 - use this empirical relationship to calculate a modeled thickness over the whole glacier
