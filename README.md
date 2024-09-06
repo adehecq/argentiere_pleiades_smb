@@ -31,17 +31,15 @@ Marin Kneib, marin.kneib@univ-grenoble-alpes.fr
 Amaury Dehcq, amaury.dehecq@univ-grenoble-alpes.fr
 
 # Content
-- IGM_inversion:
-		- igm_run.py: classic igm_run script
-		- params.json: parameters and modules used for the flux inversion.
-		- sensitivity_igm.py: script to run iteratively the inversion, changing the weights at each iteration.
+- igm_run.py: classic igm_run script
+- params.json: parameters and modules used for the flux inversion.
+- sensitivity_igm.py: script to run iteratively the inversion, changing the weights at each iteration.
 - environment_xdem.yml: environment used to run Sequential Gaussian Simulations.
 - test_kriging.py: attempt to extrapolate the bed observations to the whole glacier using ordinary kriging with a deterministic thickness model, based on slope and velocity.
 - Thickness_SIA.py: script to calculate the bed from surface velocity observations using the Shallow Ice Approximation (SIA) calibrated with GPR observations.
 - prepare_bed_data.py: pre-processing script for bed elevation data.
 - simulate_bed_with_sgs.py: script to run Sequential Gaussian Simulations.
-- UsefulCodes:
-		- geotiffcrop_shp.m: MATLAB function to crop raster with shapefile.
+- geotiffcrop_shp.m: MATLAB function to crop raster with shapefile.
 - FluxCalcsSimple.m: Function to estimate surface mass balance distribution for a glacier from inputs of ice thickness, thinning, and velocity, based on the continuity equation. Function adapted from Miles et al. (2021): 10.1038/s41467-021-23073-4
 - FluxCalcsUncertainty.m: Function to estimate surface mass balance distribution for a glacier from inputs of ice thickness, thinning, and velocity, based on the continuity equation. Function adapted from Miles et al. (2021): 10.1038/s41467-021-23073-4. In addition to FluxCalcsSimple.m, this function allows to conduct Monte-Carlo simulations to account for uncertainties.
 - FluxIGM_SMB_Argentiere.m: Master script to estimate surface mass balance distribution for a glacier from inputs of IGM flux inversion and thinning (inspired from the scripts by Miles et al, 2021).
