@@ -21,9 +21,13 @@ We have also made the SnowSlide snow redistribution scheme available online (Ber
 
 # References
 Bernhardt, M., & Schulz, K. (2010). SnowSlide: A simple routine for calculating gravitational snow transport. Geophysical Research Letters, 37(11). https://doi.org/10.1029/2010GL043086
+
 Gagliardini, O., Zwinger, T., Gillet-Chaulet, F., Durand, G., Favier, L., de Fleurian, B., Greve, R., Malinen, M., Martín, C., Råback, P., Ruokolainen, J., Sacchettini, M., Schäfer, M., Seddik, H., & Thies, J. (2013). Capabilities and performance of Elmer/Ice, a new-generation ice sheet model. Geoscientific Model Development, 6(4), 1299–1318. https://doi.org/10.5194/gmd-6-1299-2013
+
 Jouvet, G., & Cordonnier, G. (2023). Ice-flow model emulator based on physics-informed deep learning. Journal of Glaciology, 1–15. https://doi.org/10.1017/jog.2023.73
+
 Miles, E., McCarthy, M., Dehecq, A., Kneib, M., Fugger, S., & Pellicciotti, F. (2021). Health and sustainability of glaciers in High Mountain Asia. Nature Communications 2021 12:1, 12(1), 1–10. https://doi.org/10.1038/s41467-021-23073-4
+
 Messerli, A., & Grinsted, A. (2015). Image georectification and feature tracking toolbox: ImGRAFT. Geoscientific Instrumentation, Methods and Data Systems, 4(1), 23–34. https://doi.org/10.5194/gi-4-23-2015
 
 # Contacts 
