@@ -1,19 +1,19 @@
-# argentiere_pleiades_smb
+# Argentière SMB from Pléiades data
 Repository to calculate the specific mass balance of Argentiere glacier in the French Alps using Pleiades satellite data.
 
 Main reference: Kneib, M., Dehecq, A., Gilbert, A., Basset, A., Miles, E. S., Jouvet, G., Jourdain, B., Ducasse, E., Beraud, L., Rabatel, A., Mouginot, J., Carcanade, G., Laarman, O., Brun, F., and Six, D.: Distributed surface mass balance of an avalanche-fed glacier, EGUsphere [preprint], https://doi.org/10.5194/egusphere-2024-1733, 2024.
 
 # Dependencies
 
-Data to run the codes in available on the GLACIOCLIM website: https://glacioclim.osug.fr/-Acces-a-des-donnees-elaborees-
+Data to run the code in available on the GLACIOCLIM website: https://glacioclim.osug.fr/-Acces-a-des-donnees-elaborees-
 
-The Python scripts use the xdem and geoutils libraries: https://xdem.readthedocs.io/ and https://geoutils.readthedocs.io/
+The Python scripts use the xdem and geoutils libraries: https://xdem.readthedocs.io/ and https://geoutils.readthedocs.io/.
 
 A number of these MATLAB scripts were derived from the work by Miles et al. (2021) and are available on Evan Miles' github: https://github.com/miles916/grid_continuity_SMB. 
 
-These scripts call some functions developed in ImGRAFT (Messerli & Grinsted, 2015): https://github.com/grinsted/ImGRAFT
+These scripts call some functions developed in ImGRAFT (Messerli & Grinsted, 2015): https://github.com/grinsted/ImGRAFT.
 
-We used the IGM model for one of the ice thickness modelling approaches (Jouvet et al., 2023): https://github.com/jouvetg/igm 
+We used the IGM model for one of the ice thickness modelling approaches (Jouvet et al., 2023): https://github.com/jouvetg/igm.
 
 We used the Elmer/Ice model for the forward modelling (Gagliardini et al., 2013): https://github.com/elmercsc/elmerfem. 
 
